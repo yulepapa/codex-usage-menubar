@@ -1,0 +1,46 @@
+{
+  "result": {
+    "rateLimits": {
+      "primary": {
+        "usedPercent": 99,
+        "windowDurationMins": 300,
+        "resetsAt": 1893456000
+      }
+    },
+    "rateLimitsByLimitId": {
+      "codex": {
+        "limitId": "codex",
+        "limitName": "Codex",
+        "primary": {
+          "usedPercent": 34,
+          "windowDurationMins": 300,
+          "resetsAt": 1893456000
+        },
+        "secondary": {
+          "usedPercent": 77,
+          "windowDurationMins": 10080,
+          "resetsAt": 1893888000
+        }
+      }
+    },
+    "rateLimitResetCredits": {
+      "availableCount": 2,
+      "credits": [
+        {
+          "id": "fixture-credit-1",
+          "grantedAt": 1890000000,
+          "expiresAt": 1896048000,
+          "resetType": "weekly",
+          "status": "available"
+        },
+        {
+          "id": "fixture-credit-2",
+          "grantedAt": 1890000000,
+          "expiresAt": 1896652800,
+          "resetType": "weekly",
+          "status": "available"
+        }
+      ]
+    }
+  }
+}

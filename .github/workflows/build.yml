@@ -1,0 +1,33 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: ./Scripts/test.sh
+
+      - name: Build universal app
+        env:
+          ARCHS: arm64 x86_64
+          BUILD_ROOT: ${{ github.workspace }}/.build/universal-objects
+        run: ./Scripts/build.sh "${{ github.workspace }}/.build/universal/CodexUsage.app"
+
+      - name: Archive app
+        run: ditto -c -k --sequesterRsrc --keepParent .build/universal/CodexUsage.app .build/CodexUsage-universal.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexUsage-universal
+          path: .build/CodexUsage-universal.zip
+          if-no-files-found: error
