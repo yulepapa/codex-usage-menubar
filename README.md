@@ -1,5 +1,7 @@
 # Codex Usage Menu Bar
 
+**English** | [한국어](README.ko.md)
+
 [![Build](https://github.com/yulepapa/codex-usage-menubar/actions/workflows/build.yml/badge.svg)](https://github.com/yulepapa/codex-usage-menubar/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -111,10 +113,6 @@ Use `--purge` to also remove the application support directory:
 ## Compatibility note
 
 `codex app-server` and `account/rateLimits/read` are currently experimental Codex interfaces. A future Codex release may change them. This project fails closed and shows an error instead of reading authentication files directly.
-
-## 한국어
-
-macOS 기본 언어가 한국어이면 메뉴가 자동으로 한국어로 표시됩니다. 설치 후 메뉴 막대에서 남은 Codex 사용량, 초기화 시각, 초기화권 수를 확인할 수 있습니다. Hidden Bar를 사용한다면 숨김 영역을 펼친 뒤 `⌘` 키를 누른 채 Codex 항목을 세로 구분선 오른쪽으로 옮겨 주세요.
 
 ## Contributing
 
