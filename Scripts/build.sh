@@ -6,7 +6,7 @@ BUILD_ROOT="${BUILD_ROOT:-$ROOT/.build}"
 APP_PATH="${1:-$BUILD_ROOT/CodexUsage.app}"
 MIN_MACOS="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 ARCHS="${ARCHS:-$(uname -m)}"
-SOURCE="$ROOT/Sources/CodexUsage/main.swift"
+SOURCES=("$ROOT"/Sources/CodexUsage/*.swift)
 INFO_PLIST="$ROOT/Resources/Info.plist"
 
 case "$(basename "$APP_PATH")" in
@@ -48,7 +48,7 @@ for arch in $ARCHS; do
         -O \
         -framework AppKit \
         -framework Foundation \
-        "$SOURCE" \
+        "${SOURCES[@]}" \
         -o "$output"
     binaries+=("$output")
 done

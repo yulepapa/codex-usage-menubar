@@ -397,7 +397,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.autosaveName = "CodexUsage"
-        statusItem.button?.title = "Codex …"
+        statusItem.button?.image = StatusIcon.make()
+        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.imageScaling = .scaleNone
+        statusItem.button?.title = "…"
         statusItem.button?.toolTip = localized("Codex remaining usage", "Codex 남은 사용량")
         statusItem.button?.setAccessibilityLabel(localized("Codex remaining usage", "Codex 남은 사용량"))
         statusItem.button?.setAccessibilityValue(localized("Checking usage", "사용량 확인 중"))
@@ -448,7 +451,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !isRefreshing else { return }
         isRefreshing = true
         if latestSnapshot == nil {
-            statusItem.button?.title = "Codex …"
+            statusItem.button?.title = "…"
             statusItem.button?.setAccessibilityValue(localized("Checking usage", "사용량 확인 중"))
         }
         rebuildMenu()
@@ -465,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .failure(let error):
                 self.lastError = error.localizedDescription
                 if self.latestSnapshot == nil {
-                    self.statusItem.button?.title = "Codex !"
+                    self.statusItem.button?.title = "!"
                     self.statusItem.button?.setAccessibilityValue(
                         localized("Usage unavailable", "사용량을 불러올 수 없음")
                     )
@@ -487,7 +490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateStatusTitle(using snapshot: UsagePayload) {
         let windows = orderedWindows(snapshot.windows)
         guard !windows.isEmpty else {
-            statusItem.button?.title = "Codex ?"
+            statusItem.button?.title = "?"
             statusItem.button?.setAccessibilityValue(
                 localized("No usage windows are available", "표시할 사용량 구간이 없음")
             )
@@ -495,12 +498,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if windows.count == 1, let window = windows.first {
-            statusItem.button?.title = "Codex \(window.remainingPercent)%"
+            statusItem.button?.title = "\(window.remainingPercent)%"
         } else {
             let parts = windows.map {
                 "\(compactWindowLabel($0)) \($0.remainingPercent)%"
             }
-            statusItem.button?.title = "C " + parts.joined(separator: " · ")
+            statusItem.button?.title = parts.joined(separator: " · ")
         }
 
         let spokenValue = windows.map {

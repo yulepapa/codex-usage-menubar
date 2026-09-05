@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Replace the menu bar's Codex text prefix with the original Codex outline icon
+- Adapt the icon to the menu bar appearance while keeping usage percentages and accessibility labels
+- Add a full Korean README with English/Korean language links
+
 ## 1.0.0 - 2026-09-03
 
 - Initial public release

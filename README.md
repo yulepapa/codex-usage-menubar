@@ -11,7 +11,8 @@ The app automatically uses English or Korean based on the preferred macOS langua
 
 ## Features
 
-- Shows the remaining percentage directly in the menu bar
+- Shows the original Codex outline icon and remaining percentage directly in the menu bar
+- Automatically adapts the icon to light and dark menu bars
 - Supports both short and weekly rate-limit windows when Codex provides them
 - Shows reset times and available reset credits
 - Refreshes every five minutes and after wake
@@ -69,7 +70,7 @@ CODEX_USAGE_REFRESH_SECONDS=120 ./Scripts/install.sh
 
 ## Usage
 
-The menu bar title shows the remaining percentage. Click it to see:
+The menu bar shows the original Codex outline icon with the remaining percentage beside it. The icon automatically adapts to the menu bar appearance. During the first refresh, `…` appears beside the icon; `!` means usage could not be loaded, and `?` means no usage windows are available. Click it to see:
 
 - each available rate-limit window
 - the next reset time
@@ -77,7 +78,7 @@ The menu bar title shows the remaining percentage. Click it to see:
 - the last successful refresh time
 - manual refresh and quit commands
 
-If you use Hidden Bar, Bartender, or another menu bar manager, a newly created item may start in its hidden section. Expand the manager and Command-drag `Codex` into the always-visible section.
+If you use Hidden Bar, Bartender, or another menu bar manager, a newly created item may start in its hidden section. Expand the manager and Command-drag the Codex outline icon into the always-visible section.
 
 ## Build and test
 
