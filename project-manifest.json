@@ -13,7 +13,6 @@
   ],
   "canonicalDocument": "README.md",
   "documents": [
-    "README.en.md",
     "Docs/ARCHITECTURE.md",
     "Docs/OPERATIONS.md",
     "Docs/VALIDATION.md",

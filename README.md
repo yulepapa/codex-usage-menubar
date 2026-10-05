@@ -1,6 +1,6 @@
 # Codex Usage Menu Bar
 
-Codex 사용량을 메뉴바에서 확인하고, 만료가 가까운 리셋권을 조건에 맞게 자동 사용하는 네이티브 macOS 앱입니다. 현재 소스 버전은 **1.1.1**입니다. [English](README.en.md)
+Codex 사용량을 메뉴바에서 확인하고, 만료가 가까운 리셋권을 조건에 맞게 자동 사용하는 네이티브 macOS 앱입니다. 현재 소스 버전은 **1.1.1**입니다.
 
 README는 동작과 재실행 방법의 정본입니다. 실제 계정의 사용량·리셋권·로그·인증정보는 포함하지 않습니다. 개인 Mac에 이미 설치된 앱의 위치·감시기 label·백업 위치는 설치 당시 선택에 따라 저장소 기본값과 다를 수 있습니다.
 
@@ -202,7 +202,16 @@ python3 Scripts/reset-worker.py --rollback "$HOME/Library/Application Support/Co
 
 **실제 만료 배너 표시, 실제 조건부 소비, 재부팅·잠자기 복귀, 운영 롤백은 별도 미검증 항목입니다.** 저장소의 일반화한 인계 도구는 합성 검사 대상이며 개인 설치에 다시 적용하지 않았습니다. 1.1.1은 메뉴 표시 개선입니다. 소비·알림 조건과 감시기 실행 로직은 1.1.0과 같고, 새 UI의 실제 적용 여부는 로컬 설치 검증 기록으로 구분합니다. 자세한 범위는 [검증 문서](Docs/VALIDATION.md)를 참고하세요.
 
-가상 UI 미리보기는 [영문 안내](README.en.md#diagnostics-and-development)에 있습니다. 2030년 가상 자료만 사용하며 CLI나 실제 감시기에 연결하지 않습니다.
+### 가상 자료로 메뉴 미리보기
+
+실제 계정에 연결하지 않고 메뉴를 확인하려면 별도 개발 앱으로 빌드한 뒤 가상 자료를 선택합니다.
+
+```sh
+CODEX_USAGE_DEVELOPMENT=1 ./Scripts/build.sh .build/CodexUsageDev.app
+open -n .build/CodexUsageDev.app --args --preview "$PWD/Tests/Fixtures/ResetPreview" --at 1893452400
+```
+
+2030년 가상 자료만 사용하며 CLI나 실제 감시기에 연결하지 않습니다. 개발 앱은 별도 bundle identifier와 메뉴바 위치를 사용하므로 설치된 앱을 대체하지 않습니다. 화면에는 샘플 데이터라고 표시합니다.
 
 ## 12. 보안·구조·지식관리
 
