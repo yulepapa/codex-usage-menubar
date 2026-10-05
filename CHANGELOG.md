@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 — 2026-10-05
+
+- Reduce the main menu to usage, credit count/expiry and auto-use; move normal state/history/notification settings into Details.
+- Show concise actionable expiry/login/worker/notification warnings only when needed.
+- Add 20 presentation checks without changing redemption or notification policy.
+
 ## 1.1.0 — 2026-10-05
 
 - Native single-worker reset use with fresh eligibility checks, durable recovery and process lease.

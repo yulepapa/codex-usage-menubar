@@ -40,6 +40,15 @@ xcrun swiftc -swift-version 5 -O \
     "$ROOT/Tests/ResetEngineTests.swift" -o "$TEST_ROOT/reset-engine-tests"
 "$TEST_ROOT/reset-engine-tests"
 
+xcrun swiftc -swift-version 5 -O \
+    "$ROOT/Sources/CodexUsage/UsageModels.swift" \
+    "$ROOT/Sources/CodexUsage/ResetEngine.swift" \
+    "$ROOT/Sources/CodexUsage/ResetAutomation.swift" \
+    "$ROOT/Sources/CodexUsage/CodexClient.swift" \
+    "$ROOT/Sources/CodexUsage/MenuPresentation.swift" \
+    "$ROOT/Tests/MenuPresentationTests.swift" -o "$TEST_ROOT/menu-presentation-tests"
+"$TEST_ROOT/menu-presentation-tests"
+
 # A mock app-server records every request. Repeated reads must never dispatch
 # consumption, notification, or schedule mutations.
 cat > "$TEST_ROOT/mock-codex" <<'MOCK'

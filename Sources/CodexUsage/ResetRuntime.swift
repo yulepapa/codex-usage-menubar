@@ -94,6 +94,15 @@ enum ResetWorker {
 }
 
 enum NativeResetSection {
+    static func compact(store: ResetStore, now: Date) -> ResetMenuPresentation {
+        do {
+            return ResetMenuPresentation.native(state: try store.state(), settings: try store.settings(),
+                                                active: try store.active(), now: now)
+        } catch {
+            return ResetMenuPresentation(title: localized("Reset credits: unknown", "리셋권 확인 필요"),
+                warnings: [localized("Reset state unreadable · auto-use blocked", "설정·상태 확인 필요 · 자동 사용 차단")])
+        }
+    }
     static func rows(store: ResetStore, now: Date) -> [String] {
         do {
             let state = try store.state()

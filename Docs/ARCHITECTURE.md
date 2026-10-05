@@ -23,3 +23,5 @@ flowchart LR
 The menu alone never consumes. The CLI consumption result remains authoritative: `reset`, `alreadyRedeemed`, `nothingToReset` and `noCredit` are distinct. An empty credit list is not proof of redemption. Notification status and redemption status are independent.
 
 The portable Python handoff helper selects an existing legacy service explicitly, checks read-only access, backs up, stages the bundle, stops the old consumer, captures its final ledger, and then repoints the same label. Its optional enable flag governs automatic use. This helper is packaging/operations code; it does not change the installed v1.1.0 Swift runtime.
+
+`MenuPresentation.swift` provides compact, read-only count/expiry presentation and conditional warnings. Normal worker status/history/timing explanations stay in the Details submenu. It changes no consume, notifier or worker policy.

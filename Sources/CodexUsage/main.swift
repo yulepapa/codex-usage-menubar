@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var latestSnapshot: UsagePayload?
     private var lastUpdated: Date?
     private var lastError: String?
+    private var usageWarning: String?
+    private var settingsWarning: String?
     private var isRefreshing = false
     private var watcher = ResetWatcherSnapshot()
     private let previewDirectory: URL?
@@ -148,9 +150,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.latestSnapshot = snapshot
                 self.lastUpdated = Date()
                 self.lastError = nil
+                self.usageWarning = nil
                 self.updateStatusTitle(using: snapshot)
             case .failure(let error):
                 self.lastError = error.localizedDescription
+                self.usageWarning = UsageMenuWarning.text(for: error)
                 if self.latestSnapshot == nil {
                     self.statusItem.button?.title = "!"
                     self.statusItem.button?.setAccessibilityValue(
@@ -198,131 +202,128 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildMenu() {
         menu.removeAllItems()
-
-        let heading = NSMenuItem(title: localized("Codex Usage", "Codex 사용량"), action: nil, keyEquivalent: "")
-        heading.isEnabled = false
-        heading.attributedTitle = NSAttributedString(
-            string: localized("Codex Usage", "Codex 사용량"),
-            attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]
-        )
-        menu.addItem(heading)
-        if previewDirectory != nil { addInfoItem(localized("DEVELOPMENT PREVIEW · SAMPLE DATA", "개발 미리보기 · 샘플 데이터")) }
-        menu.addItem(.separator())
+        if previewDirectory != nil { addInfoItem(localized("SAMPLE DATA", "샘플 데이터")) }
+        let details = NSMenu()
+        details.autoenablesItems = false
 
         if let snapshot = latestSnapshot {
-            if let bucket = snapshot.bucketLabel,
-               bucket.caseInsensitiveCompare("codex") != .orderedSame {
+            if let bucket = snapshot.bucketLabel, bucket.caseInsensitiveCompare("codex") != .orderedSame {
                 addInfoItem(localized("Limit: ", "한도: ") + bucket)
-                menu.addItem(.separator())
             }
-
             let windows = orderedWindows(snapshot.windows)
-            if windows.isEmpty {
-                addInfoItem(localized("No usage windows are available.", "표시할 사용량 구간이 없습니다."))
-            } else {
-                for (index, window) in windows.enumerated() {
-                    addInfoItem(
-                        windowLabel(window) + localized(" remaining ", " 남음 ") + "\(window.remainingPercent)%"
-                    )
-                    if let reset = window.resetsAt {
-                        addInfoItem(
-                            localized("  Resets ", "  초기화 ")
-                                + formatDate(timestamp: reset)
-                                + " · "
-                                + relativeTime(timestamp: reset)
-                        )
-                    }
-                    if index < windows.count - 1 { menu.addItem(.separator()) }
+            if windows.isEmpty { addInfoItem(localized("Usage windows unavailable", "사용량 구간 확인 필요")) }
+            for window in windows {
+                addInfoItem(windowLabel(window) + localized(" remaining ", " 남음 ")
+                    + "\(window.remainingPercent)%", bold: true)
+                if let reset = window.resetsAt {
+                    addInfoItem(windowLabel(window) + localized(" resets ", " 초기화 ")
+                        + formatDate(timestamp: reset) + " · " + relativeTime(timestamp: reset), to: details)
                 }
             }
-
         } else {
-            addInfoItem(
-                isRefreshing
-                    ? localized("Checking usage…", "사용량을 확인하는 중…")
-                    : localized("Usage is unavailable.", "사용량을 불러오지 못했습니다.")
-            )
+            addInfoItem(isRefreshing ? localized("Checking usage…", "사용량 확인 중…")
+                : localized("Usage unavailable", "사용량 확인 필요"))
         }
 
         menu.addItem(.separator())
-        addInfoItem(localized("Reset credits & auto-use", "리셋권 · 자동 사용"))
-        let creditsAreFresh = lastError == nil && (lastUpdated.map { displayDate.timeIntervalSince($0) <= refreshInterval + 90 } ?? false)
-        let native = previewDirectory == nil && FileManager.default.fileExists(atPath: ResetStore.standard.directory.appendingPathComponent("ownership.json").path)
+        let creditsAreFresh = lastError == nil && (lastUpdated.map {
+            displayDate.timeIntervalSince($0) <= refreshInterval + 90
+        } ?? false)
+        let native = previewDirectory == nil && FileManager.default.fileExists(atPath:
+            ResetStore.standard.directory.appendingPathComponent("ownership.json").path)
+        let reset: ResetMenuPresentation
+        if native {
+            reset = NativeResetSection.compact(store: .standard, now: displayDate)
+        } else {
+            reset = ResetMenuPresentation.legacy(credits: creditsAreFresh ? latestSnapshot?.credits : nil,
+                                                watcher: watcher, now: displayDate)
+        }
+        addInfoItem(reset.title, bold: true)
+        if let expiry = reset.expiry { addInfoItem(expiry) }
+
         if native {
             let settings = try? ResetStore.standard.settings()
             let canEdit = (try? ResetStore.standard.active()) == true
-            addToggle(localized("Automatic reset use", "리셋권 자동 사용"), checked: settings?.autoUse == true,
-                      action: #selector(toggleAutoUse), enabled: canEdit)
+            addToggle(settings?.autoUse == true ? localized("Auto-use: On", "자동 사용 켜짐")
+                : localized("Auto-use: Off", "자동 사용 꺼짐"), checked: settings?.autoUse == true,
+                action: #selector(toggleAutoUse), enabled: canEdit)
             addToggle(localized("Expiry notifications", "만료 전 Mac 알림"), checked: settings?.reminders == true,
-                      action: #selector(toggleReminders), enabled: canEdit)
-            for row in NativeResetSection.rows(store: .standard, now: displayDate) { addInfoItem(row) }
+                action: #selector(toggleReminders), enabled: canEdit, to: details)
+            details.addItem(.separator())
+            for row in NativeResetSection.rows(store: .standard, now: displayDate) { addInfoItem(row, to: details) }
         } else {
+            addInfoItem(watcher.isPresent ? localized("Auto-use: existing watcher", "자동 사용: 기존 감시기")
+                : localized("Auto-use: not configured", "자동 사용: 미설정"))
+            details.addItem(.separator())
             for row in ResetSection.rows(credits: creditsAreFresh ? latestSnapshot?.credits : nil,
-                                         watcher: watcher, now: displayDate) { addInfoItem(row) }
+                                         watcher: watcher, now: displayDate) { addInfoItem(row, to: details) }
         }
 
-        if let error = lastError {
-            menu.addItem(.separator())
-            addInfoItem(
-                localized("Latest error: ", "최근 조회 오류: ") + shortened(error, limit: 90)
-            )
+        var warnings = reset.warnings
+        if let warning = settingsWarning { warnings.insert(warning, at: 0) }
+        if let warning = usageWarning { warnings.insert(warning, at: 0) }
+        else if lastUpdated.map({ displayDate.timeIntervalSince($0) > refreshInterval + 90 }) == true {
+            warnings.insert(localized("Usage data needs refresh", "사용량 최신 확인 필요"), at: 0)
         }
+        if !warnings.isEmpty {
+            menu.addItem(.separator())
+            var seen = Set<String>()
+            for warning in warnings where seen.insert(warning).inserted { addInfoItem("⚠︎ " + warning) }
+        }
+
+        details.addItem(.separator())
+        if lastError != nil { addInfoItem(usageWarning ?? localized("Latest usage check failed", "최근 사용량 조회 실패"), to: details) }
+        if let updated = lastUpdated { addInfoItem(localized("Last checked ", "마지막 확인 ") + formatTime(updated), to: details) }
+        addInfoItem(localized("Refresh interval: ", "자동 갱신: ") + formatRefreshInterval(refreshInterval), to: details)
 
         menu.addItem(.separator())
-        if let updated = lastUpdated {
-            addInfoItem(localized("Last checked ", "마지막 확인 ") + formatTime(updated))
-        }
-        addInfoItem(
-            localized("Refresh interval: ", "자동 갱신: ") + formatRefreshInterval(refreshInterval)
-        )
-
-        let refreshItem = NSMenuItem(
-            title: isRefreshing
-                ? localized("Refreshing…", "새로고침 중…")
-                : localized("Refresh Now", "지금 새로고침"),
-            action: #selector(refreshNow),
-            keyEquivalent: "r"
-        )
+        let detailItem = NSMenuItem(title: localized("Details", "상세"), action: nil, keyEquivalent: "")
+        detailItem.submenu = details
+        detailItem.isEnabled = true
+        menu.addItem(detailItem)
+        let refreshItem = NSMenuItem(title: isRefreshing ? localized("Refreshing…", "새로고침 중…")
+            : localized("Refresh Now", "새로고침"), action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
         refreshItem.keyEquivalentModifierMask = [.command]
         refreshItem.isEnabled = !isRefreshing
         menu.addItem(refreshItem)
-
-        menu.addItem(.separator())
-        let quitItem = NSMenuItem(
-            title: localized("Quit Codex Usage", "Codex 사용량 종료"),
-            action: #selector(quitApp),
-            keyEquivalent: "q"
-        )
+        let quitItem = NSMenuItem(title: localized("Quit", "종료"), action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         quitItem.keyEquivalentModifierMask = [.command]
-        quitItem.isEnabled = true
         menu.addItem(quitItem)
+
         let args = CommandLine.arguments
         if let index = args.firstIndex(of: "--export-menu-state"), args.indices.contains(index + 1) {
-            let rows = menu.items.filter { !$0.isSeparatorItem }.map {
-                ["title": $0.title, "enabled": $0.isEnabled, "checked": $0.state == .on] as [String: Any]
-            }
             let payload: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
-                                          "rows": rows, "version": appVersion]
+                                          "rows": menuRows(menu), "version": appVersion]
             if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
                 try? data.write(to: URL(fileURLWithPath: args[index + 1]), options: .atomic)
             }
         }
     }
 
-    private func addToggle(_ title: String, checked: Bool, action: Selector, enabled: Bool) {
+    private func menuRows(_ target: NSMenu) -> [[String: Any]] {
+        target.items.filter { !$0.isSeparatorItem }.map { item in
+            var row: [String: Any] = ["title": item.title, "enabled": item.isEnabled,
+                                      "checked": item.state == .on, "bold": item.attributedTitle != nil]
+            if let submenu = item.submenu { row["submenu"] = menuRows(submenu) }
+            return row
+        }
+    }
+
+    private func addToggle(_ title: String, checked: Bool, action: Selector, enabled: Bool, to target: NSMenu? = nil) {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self; item.state = checked ? .on : .off; item.isEnabled = enabled
-        menu.addItem(item)
+        (target ?? menu).addItem(item)
     }
 
     @objc private func toggleAutoUse() {
         do {
             try ResetStore.standard.updateSettings { $0.autoUse.toggle() }
             try ResetStore.standard.write("wake.json", ["at": Date().timeIntervalSince1970])
+            settingsWarning = nil
         }
-        catch { lastError = localized("Could not save reset settings", "자동 사용 설정을 저장하지 못했습니다") }
+        catch { settingsWarning = localized("Could not save auto-use setting", "자동 사용 설정 저장 실패") }
         rebuildMenu()
     }
 
@@ -331,7 +332,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try ResetStore.standard.updateSettings { $0.reminders.toggle() }
             try ResetStore.standard.write("wake.json", ["at": Date().timeIntervalSince1970])
             if try ResetStore.standard.settings().reminders { requestNotificationPermission() }
-        } catch { lastError = localized("Could not save notification settings", "알림 설정을 저장하지 못했습니다") }
+            settingsWarning = nil
+        } catch { settingsWarning = localized("Could not save notification setting", "알림 설정 저장 실패") }
         rebuildMenu()
     }
 
@@ -343,10 +345,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func addInfoItem(_ title: String) {
+    private func addInfoItem(_ title: String, bold: Bool = false, to target: NSMenu? = nil) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
-        menu.addItem(item)
+        if bold { item.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]) }
+        (target ?? menu).addItem(item)
     }
 
     private func windowLabel(_ window: UsageWindow) -> String {

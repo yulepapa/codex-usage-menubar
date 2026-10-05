@@ -1,12 +1,12 @@
 # Codex Usage Menu Bar
 
-Native macOS menu bar usage display with a single background reset-credit worker. Version **1.1.0**. [한국어](README.md)
+Native macOS menu bar usage display with a single background reset-credit worker. Version **1.1.1**. [한국어](README.md)
 
 ## Behavior
 
 - Shows the Codex outline icon and the remaining short/weekly usage windows supplied by the locally authenticated Codex CLI.
 - Displays available reset credits, expiry, conditional next attempt, recent results and worker/notification status. Missing or stale data stays unknown.
-- Independent **Automatic reset use** and **Expiry notifications** menu switches.
+- Primary **Auto-use: On/Off** switch and **Details → Expiry notifications** switch. Normal status narration, history and timing diagnostics stay in Details; actionable warnings remain on the first screen.
 - Tries a reset in the final **20 minutes before expiry** only after a fresh core 5-hour or weekly window has **10% or less remaining**. The service makes the final eligibility decision.
 - Native reminders **1 hour, 20 minutes and 5 minutes** before expiry. Confirmed use stops reminders. Wake-up coalesces missed thresholds rather than emitting a backlog.
 - The registered worker uses `codex app-server --stdio` and the published account read/consume RPCs. It starts **no model turn** and reads no authentication files.

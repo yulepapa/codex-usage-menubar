@@ -1,6 +1,6 @@
 import Foundation
 
-let appVersion = "1.1.0"
+let appVersion = "1.1.1"
 
 func localized(_ english: String, _ korean: String) -> String {
     let language = Locale.preferredLanguages.first?.lowercased() ?? "en"
