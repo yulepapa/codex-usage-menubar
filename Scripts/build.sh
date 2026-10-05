@@ -34,6 +34,11 @@ trap cleanup EXIT
 
 mkdir -p "$STAGE_APP/Contents/MacOS" "$STAGE_APP/Contents/Resources" "$STAGE_DIR/objects"
 cp "$INFO_PLIST" "$STAGE_APP/Contents/Info.plist"
+if [ "${CODEX_USAGE_DEVELOPMENT:-0}" = "1" ]; then
+    /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier io.github.yulepapa.CodexUsage.development' "$STAGE_APP/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Codex Usage Dev' "$STAGE_APP/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c 'Set :CFBundleName Codex Usage Dev' "$STAGE_APP/Contents/Info.plist"
+fi
 
 binaries=()
 for arch in $ARCHS; do
@@ -48,6 +53,7 @@ for arch in $ARCHS; do
         -O \
         -framework AppKit \
         -framework Foundation \
+        -framework UserNotifications \
         "${SOURCES[@]}" \
         -o "$output"
     binaries+=("$output")

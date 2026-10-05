@@ -1,128 +1,228 @@
 # Codex Usage Menu Bar
 
-**English** | [한국어](README.ko.md)
+Codex 사용량을 메뉴바에서 확인하고, 만료가 가까운 리셋권을 조건에 맞게 자동 사용하는 네이티브 macOS 앱입니다. 현재 소스 버전은 **1.1.3**입니다.
 
-[![Build](https://github.com/yulepapa/codex-usage-menubar/actions/workflows/build.yml/badge.svg)](https://github.com/yulepapa/codex-usage-menubar/actions/workflows/build.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+README는 동작과 재실행 방법의 정본입니다. 실제 계정의 사용량·리셋권·로그·인증정보는 포함하지 않습니다. 개인 Mac에 이미 설치된 앱의 위치·감시기 label·백업 위치는 설치 당시 선택에 따라 저장소 기본값과 다를 수 있습니다.
 
-A small native macOS menu bar app that shows how much Codex usage remains.
+## 1. 무엇을 해주는 앱인가요?
 
-The app automatically uses English or Korean based on the preferred macOS language.
+- 기존 Codex 윤곽선 아이콘 옆에 남은 사용량을 표시합니다. 메뉴바의 밝기와 언어 설정에 맞춰 아이콘과 한글/영문을 적용합니다.
+- Codex가 제공하는 단기·주간 제한 구간, 다음 초기화 시각, 리셋권 보유·만료를 보여줍니다.
+- 첫 화면의 **자동 사용 켜짐/꺼짐**과 **상세 → 만료 전 Mac 알림**을 각각 켜고 끌 수 있습니다.
+- 별도로 등록된 백그라운드 감시기 하나가 최신 조건을 확인하고 자동 사용합니다. 메뉴의 사용량 조회 자체는 소비를 실행하지 않습니다.
+- 리셋권이 만료되기 **1시간·20분·5분 전**에 macOS 알림을 보냅니다. 확인된 사용 완료 뒤에는 해당 권의 알림을 중단합니다.
 
-## Features
+감시기는 기존 로그인으로 `codex app-server --stdio`를 실행하고 account 조회·소비 RPC를 호출합니다. **모델 턴을 시작하지 않으며**, 인증 파일을 직접 읽거나 토큰을 복사하지 않습니다. 사용 한도가 낮다는 이유만으로 로컬 감시기의 모델 호출이 막히는 구조는 아니지만, 네트워크·로그인·서비스의 실제 리셋 가능 여부는 여전히 영향을 줍니다.
 
-- Shows the original Codex outline icon and remaining percentage directly in the menu bar
-- Automatically adapts the icon to light and dark menu bars
-- Supports both short and weekly rate-limit windows when Codex provides them
-- Shows reset times and available reset credits
-- Refreshes every five minutes and after wake
-- Includes a manual refresh command
-- Runs as a menu bar agent with no Dock icon
-- Starts automatically at login when installed with the included script
-- Uses native Swift and AppKit with no Python or third-party runtime dependency
+## 2. 지원 환경과 준비
 
-## Privacy and security
+| 항목 | 요구 사항 |
+| --- | --- |
+| 운영체제 | macOS 13 이상 |
+| 앱 | Swift, AppKit, UserNotifications; 외부 앱 런타임 없음 |
+| 사용량 조회 | 설치와 로그인이 완료된 Codex CLI |
+| 빌드 | Xcode Command Line Tools |
+| 기존 감시기 인계 도구 | Python 3.9 이상; 앱 실행 자체에는 Python 불필요 |
+| 자동 사용 | 등록된 단일 사용자 LaunchAgent, 정상 조회와 최신 조건 |
+| Mac 알림 | CodexUsage 알림 허용; 집중 모드·배너 설정 확인 |
 
-Codex Usage Menu Bar does not read Codex authentication files or copy access tokens. It starts the locally installed Codex CLI with `codex app-server --stdio` and calls the read-only `account/rateLimits/read` method.
+먼저 터미널에서 다음을 확인하세요. 로그인 과정은 Codex CLI의 정상 절차를 사용합니다. 인증 파일을 프로젝트에 복사하지 마세요.
 
-The app:
-
-- does not send data to its own server or any third party
-- does not persist usage snapshots to disk
-- stores only the detected Codex executable path in `~/Library/Application Support/CodexUsage/codex-path`
-- suppresses app-server stderr so credentials cannot accidentally appear in app logs
-
-The Codex CLI still communicates with OpenAI according to the user's own Codex configuration.
-
-## Requirements
-
-- macOS 13 or later
-- An installed and authenticated [Codex CLI](https://github.com/openai/codex)
-- Xcode Command Line Tools for building from source
-
-Install the command line tools if needed:
-
-```bash
-xcode-select --install
+```sh
+codex --version
+codex login status
+xcrun swiftc --version
 ```
 
-## Install from source
+Command Line Tools가 없다면 `xcode-select --install`로 설치합니다. 별도로 설치된 Command Line Tools를 이번 명령에만 선택해야 한다면 `DEVELOPER_DIR=/Library/Developer/CommandLineTools make test`를 사용할 수 있습니다. 시스템 전역 설정을 바꾸는 명령은 아닙니다.
 
-```bash
+## 3. 소스를 받아 검사하고 빌드하기
+
+```sh
 git clone https://github.com/yulepapa/codex-usage-menubar.git
 cd codex-usage-menubar
+make test
+make build
+```
+
+개발 중인 변경은 `main` 병합 전에 PR 브랜치에 있을 수 있습니다. 해당 기능을 검토하려면 PR에 표시된 브랜치를 선택한 뒤 버전과 변경 내용을 확인하세요. `main`에 항상 1.1.0이 올라왔다고 가정하면 안 됩니다.
+
+`make test`는 가상 자료와 가짜 app-server만 사용합니다. `make build`의 결과는 `.build/CodexUsage.app`입니다. `make universal`은 arm64와 x86_64를 함께 빌드합니다. Git에는 실행 바이너리나 `.build`를 넣지 않습니다.
+
+## 4. 설치 방법은 현재 상태에 따라 다릅니다
+
+### 사용량 표시를 처음 설치하는 경우
+
+리셋 감시기가 아직 구성되지 않았다면 다음을 사용합니다.
+
+```sh
 ./Scripts/install.sh
 ```
 
-The installer builds the app for the current Mac, installs it at `~/Applications/CodexUsage.app`, and creates a user LaunchAgent for login startup.
+앱을 `~/Applications/CodexUsage.app`에 설치하고 로그인할 때 메뉴 앱을 여는 사용자 LaunchAgent를 등록합니다. 이 명령만으로 리셋권 자동 소비기를 새로 등록하거나 기존 감시기를 교체하지 않습니다.
 
-If Codex is installed in an unusual location:
+CLI가 다른 위치에 있다면 다음처럼 실제 실행파일을 명시합니다.
 
-```bash
-CODEX_PATH=/absolute/path/to/codex ./Scripts/install.sh
+```sh
+CODEX_PATH=/example/bin/codex ./Scripts/install.sh
 ```
 
-To change the refresh interval, use a value of at least 60 seconds:
+`/example/bin/codex`는 가상 경로입니다. 메뉴의 기본 새로고침은 5분이며 `CODEX_USAGE_REFRESH_SECONDS=120 ./Scripts/install.sh`처럼 조정할 수 있습니다. 최소 60초입니다. 메뉴 앱은 잠자기에서 깨어날 때도 새로고침합니다.
 
-```bash
-CODEX_USAGE_REFRESH_SECONDS=120 ./Scripts/install.sh
+### 기존 리셋 감시기를 인계하는 경우
+
+**기존 감시기와 새 감시기를 동시에 실행하지 마세요.** [인계·복구 안내](Docs/OPERATIONS.md)에 따라 정확한 기존 plist와 설치 앱 경로를 선택합니다. 다음 label과 경로는 가상 예시입니다.
+
+```sh
+python3 Scripts/reset-worker.py --plan \
+  --legacy-plist "$HOME/Library/LaunchAgents/example.reset-watcher.plist" \
+  --app "$HOME/Applications/CodexUsage.app" \
+  --enable-auto-use
 ```
 
-## Usage
+`--plan`은 선택한 설정과 기존 복구 기록을 읽기만 합니다. 앱·LaunchAgent·설정을 변경하지 않습니다. 계획을 검토하고 사용 중인 실행 환경의 정상 승인 절차를 거쳐 적용합니다.
 
-The menu bar shows the original Codex outline icon with the remaining percentage beside it. The icon automatically adapts to the menu bar appearance. During the first refresh, `…` appears beside the icon; `!` means usage could not be loaded, and `?` means no usage windows are available. Click it to see:
-
-- each available rate-limit window
-- the next reset time
-- available reset credits and the earliest expiry
-- the last successful refresh time
-- manual refresh and quit commands
-
-If you use Hidden Bar, Bartender, or another menu bar manager, a newly created item may start in its hidden section. Expand the manager and Command-drag the Codex outline icon into the always-visible section.
-
-## Build and test
-
-```bash
-make build       # native architecture
-make universal   # arm64 + x86_64
-make test        # offline fixture and packaging checks
-make test-live   # also query the locally authenticated Codex CLI
+```sh
+python3 Scripts/reset-worker.py --apply \
+  --legacy-plist "$HOME/Library/LaunchAgents/example.reset-watcher.plist" \
+  --app "$HOME/Applications/CodexUsage.app" \
+  --enable-auto-use
 ```
 
-The built app is written to `.build/CodexUsage.app`.
+같은 label을 사용하며 기존 앱·plist·소비 복구 기록을 백업합니다. 기존 감시기를 멈춘 뒤 최종 기록을 다시 읽고 새 감시기에 인계하므로 준비 중 생긴 소비도 잃지 않도록 설계했습니다. `--enable-auto-use`가 없으면 자동 사용은 꺼진 상태로 인계하고 알림만 켭니다. `--legacy-dir`, `--built-app`, `--codex-path`로 명시적 위치를 지정할 수 있습니다.
 
-A command-line diagnostic is also available:
+이 도구는 `reset_credit_watcher.py` 형식의 기존 감시기를 인계하는 용도입니다. 임의의 자동화나 기존 감시기가 없는 새 소비기 설치를 자동으로 추정하지 않습니다. 이미 별도 절차로 인계된 개인 설치본은 당시 인계 도구와 백업을 보존하세요. 저장소의 일반화한 도구와 과거 개별 백업은 서로 교환해서 사용할 수 없습니다.
 
-```bash
+### 이미 native 감시기가 설치된 경우
+
+일반 설치·제거 스크립트는 `reset/worker.json`이 있으면 중단합니다. 실행 중인 소비기의 앱이나 복구 기록을 덮어쓰지 않기 위한 검사입니다. 메뉴에서 상태를 확인하고 설치 당시의 인계·업데이트·롤백 절차를 따르세요. 자동 사용을 잠시 멈추려면 메뉴 스위치를 끄면 됩니다.
+
+## 5. 메뉴바 사용법과 표시 의미
+
+아이콘을 클릭하면 각 구간의 **남은 사용량**, **리셋권 수·만료**, **자동 사용 켜짐/꺼짐**부터 보입니다. 정상 감시 중이라는 설명을 매번 반복하지 않습니다. **상세**에서 사용량 초기화 시각, 다음 조건부 시도, 최근 결과, 알림 설정과 마지막 조회·갱신 정보를 확인합니다. 만료 임박, 소비 결과 미확인, 감시기·알림·로그인 문제처럼 조치가 필요한 경고는 첫 화면에만 필요한 때 짧게 표시합니다.
+
+| 표시 | 의미 |
+| --- | --- |
+| `…` | 최초 사용량 조회 중 |
+| 백분율 | 해당 구간에서 남은 사용량; 여러 구간이면 구간별 표시 |
+| `!` | 조회 실패; 남은 값이 0이라는 뜻은 아님 |
+| `?` | 제공된 사용량 구간을 확인할 수 없음 |
+| 초기화 시각(상세) | 서비스가 알려준 해당 제한 구간의 갱신 시각 |
+| 보유·만료 | 최신 조회로 확인한 리셋권 정보 |
+| 자동 사용 시도(상세) | 가장 빠른 만료 20분 전의 조건부 예정; 실행 보장은 아님 |
+| 최근 결과(상세) | 기록된 사용 완료·이미 사용·없음·조건 대기·실패 등을 구분 |
+| 감시·알림 상태(상세) | 백그라운드 상태와 알림 권한/전달 상태; 소비 결과와 별개 |
+
+**새로고침**으로 사용량을 다시 읽습니다. 첫 화면의 **자동 사용 켜짐/꺼짐**과 **상세 → 만료 전 Mac 알림**은 독립적으로 선택할 수 있습니다. 알림만 켜고 자동 소비는 끌 수도 있습니다. macOS 알림 권한을 허용해야 배너를 보낼 수 있습니다.
+
+메뉴바 관리 앱이 새 항목을 숨겼다면 숨김 영역을 펼친 뒤 `Command`를 누르고 Codex 아이콘을 원하는 위치로 옮기세요. 날짜는 Mac 시간대와 약자를 표시합니다. 한국 시간은 보통 `GMT+9`로 보이며 `Asia/Seoul` 날짜 경계도 합성 검사합니다.
+
+## 6. 자동 사용은 언제 실행되나요?
+
+다음 조건을 모두 만족해야 시도합니다.
+
+1. 단일 감시기가 선택한 LaunchAgent로 정상 실행되고, 소유권과 프로세스 잠금이 유효합니다.
+2. 메뉴의 자동 사용 설정이 켜져 있습니다.
+3. 조회한 권이 아직 만료되지 않았고 만료까지 20분 이하입니다.
+4. 최신 **core Codex 5시간(300분) 또는 주간(10080분) 잔여가 10% 이하**입니다. 다른 제한 bucket으로 소비를 허가하지 않습니다.
+5. 소비 직전 재조회에서도 같은 권과 만료 시각, 최신 사용 조건을 확인합니다.
+6. 요청 식별자를 디스크에 먼저 저장한 뒤 소비 RPC를 보냅니다. 최종 허용과 결과는 서비스가 결정합니다.
+
+감시기는 깨어 있는 동안 1분마다 평가합니다. 재시작·복귀나 설정 변경 신호가 있으면 다시 평가합니다. ‘20분 전’은 정확한 초 단위 예약이 아니라 이 평가 주기 안의 시도 구간입니다.
+
+중복 실행은 프로세스 잠금, LaunchAgent label·실행 경로 검증, 기록된 소비 결과로 막습니다. 네트워크 오류 등으로 결과가 불확실한 시도가 하나라도 있으면 **다른 권의 새 소비를 보류**합니다. 같은 idempotency 키를 보존해 180초 이후 최신 조건에 맞게 해당 시도만 다시 확인합니다. 재시작·재시도 대기 중에도 이 보류는 유지하며 만료 알림은 독립적으로 보냅니다. 재조회에서 권이 사라지거나 만료돼도 성공이라고 추정하지 않습니다. 서비스의 같은 키 응답으로 결과가 확정돼야 보류를 해제합니다. 성공 뒤에는 오래된 원격 자료에 대한 연속 사용을 줄이기 위해 5분의 대기 구간을 둡니다.
+
+미확인 권이 사라지거나 만료·만료 시각 변경으로 수동 확인을 기다리는 동안에도, 최신 조회에서 사용 가능한 다른 권의 만료 알림은 계속 처리합니다. 자동 사용이 꺼져 있어도 알림 설정이 켜져 있으면 동일하게 동작합니다. 알림을 보낸 사실은 미확인 소비의 성공을 뜻하지 않습니다.
+
+## 7. 알림과 Mac 전원·앱 종료
+
+알림 시점은 **1시간·20분·5분 전**입니다. 사용 완료·이미 사용·해당 권 없음이 확인되면 그 권의 알림을 지웁니다. 사용 조건을 아직 만족하지 않아도 만료 알림은 독립적으로 받을 수 있습니다.
+
+- **메뉴 앱 종료:** 등록된 백그라운드 감시기는 계속 실행됩니다. 자동 소비를 멈추려면 종료 전에 메뉴 스위치를 끄세요.
+- **전원 종료·잠자기:** 실행하지 못합니다. 이미 만료된 권을 복귀 후 되살릴 수 없습니다.
+- **로그인·재시작·잠자기 복귀:** 남아 있는 유효한 권과 조건을 다시 확인합니다. 놓친 알림을 한꺼번에 띄우지 않고 현재 가장 가까운 단계 하나로 합칩니다.
+- **집중 모드·알림 거부:** 알림 등록 성공도 화면 배너를 보장하지 않습니다. 시스템 설정을 확인하세요.
+
+앱은 전원 설정을 바꾸거나 Mac을 자동으로 깨우지 않습니다. 클라우드 대체 실행도 없습니다.
+
+## 8. 설정·로그·백업은 어디에 있나요?
+
+| 일반화한 위치 | 내용 |
+| --- | --- |
+| `~/Library/Application Support/CodexUsage/codex-path` | 감지한 CLI 경로 |
+| `…/CodexUsage/reset/settings.json` | 자동 사용·알림 설정 |
+| `…/CodexUsage/reset/state.json` | 권 메타데이터·알림 단계·소비 복구 기록 |
+| `…/CodexUsage/reset/worker.json` | 선택한 label·실행파일·plist |
+| `…/CodexUsage/reset/ownership.json`, `wake.json`, lock 파일 | 실행 소유권·재평가 신호·중복 실행 방지 |
+| `…/CodexUsage/reset/worker.stdout.log`, `worker.stderr.log` | 로컬 실행 로그; 공개 업로드 금지 |
+| `~/Library/LaunchAgents/<선택한-label>.plist` | 선택한 단일 감시기 |
+| `…/CodexUsage/backups/<시각>/` | 저장소 인계 도구의 복구용 백업 |
+
+설정·복구 상태는 사용자 전용 권한으로 저장합니다. 상태 파일에는 재시도에 필요한 식별자가 있으므로 공개할 자료가 아닙니다. 메뉴는 식별자·원본 오류·프롬프트를 표시하지 않습니다. 과거 개별 인계 절차의 백업은 다른 위치에 있을 수 있습니다.
+
+기존 Python 감시기를 읽기만 하는 호환 어댑터도 남겨두었습니다. `$CODEX_HOME/automations/codex`(기본 `~/.codex/automations/codex`) 또는 `CODEX_USAGE_RESET_WATCHER_DIR`의 정책·상태·제한된 로그만 읽으며 Python 코드를 실행하지 않습니다. native 인계 전 상태와 가상 미리보기를 지원하기 위해 필요합니다.
+
+## 9. 문제가 생기면
+
+```sh
 .build/CodexUsage.app/Contents/MacOS/CodexUsage --print-usage
+.build/CodexUsage.app/Contents/MacOS/CodexUsage --print-native-reset-status
+.build/CodexUsage.app/Contents/MacOS/CodexUsage --notification-status
 ```
 
-It prints a sanitized usage payload and never prints authentication material.
+위 진단은 소비를 실행하지 않습니다. 출력에도 개인 사용량과 만료 시각이 포함될 수 있으므로 공개 이슈에 그대로 붙이지 마세요. 실제 설치 앱을 점검할 때는 `.build` 대신 그 설치 앱의 경로를 사용합니다.
 
-## Uninstall
+| 증상 | 확인할 것 |
+| --- | --- |
+| `!` 또는 오래된 조회 | CLI 설치·로그인·네트워크; 코드가 인증 파일을 직접 읽게 수정하지 않기 |
+| 자동 사용 스위치 비활성 | native 감시기가 아직 인계되지 않았는지, 선택한 plist/실행 경로 일치 여부 |
+| 조건 대기 | 만료 20분 이내와 core 잔여 10% 이하를 모두 만족하는지 |
+| 결과 확인 필요 | 복구 기록 보존; 키를 지우거나 새 소비기로 중복 시도하지 않기 |
+| 알림이 안 보임 | 시스템 설정 → 알림 → CodexUsage 허용, 집중 모드·배너 설정 |
+| 설치기가 감시기 구성을 발견하고 중단 | 일반 사용량 설치 대신 기존 인계·복구 절차 사용 |
+| Mac이 꺼져 있던 동안 만료 | 로컬 실행 제약; 나중에 성공했다고 추정하지 않기 |
 
-```bash
-./Scripts/uninstall.sh
+## 10. 백업과 복구
+
+인계 도구가 알려준 **같은 도구의 백업 경로**로 복구합니다.
+
+```sh
+python3 Scripts/reset-worker.py --rollback "$HOME/Library/Application Support/CodexUsage/backups/EXAMPLE_TIMESTAMP"
 ```
 
-Use `--purge` to also remove the application support directory:
+새 감시기를 중지하고 새 소비 기록의 키·결과를 기존 상태에 병합한 뒤 이전 앱과 plist를 복원합니다. 복구 명령도 실행 환경의 정상 승인 절차를 따라야 합니다. 백업이 있다는 것과 실제 운영 롤백을 시험했다는 것은 다릅니다.
 
-```bash
-./Scripts/uninstall.sh --purge
+이미 설치된 개인 환경의 이전 버전 백업과 당시 인계 도구는 유지해야 합니다. 다른 형식의 백업을 이 명령에 넣지 마세요. `state.json`을 지워 ‘처음부터 재시도’하면 중복 방지 정보가 없어질 수 있습니다. 감시기가 구성된 상태에서는 일반 제거기의 `--purge`도 거부합니다.
+
+## 11. 테스트와 알려진 미검증
+
+50개 상태·시간대 검사, 29개 자동 실행기 검사, 20개 간결한 메뉴 상태 검사와 가짜 stdio의 반복 조회·소비 계약 검사, 빌드 실패 시 이전 결과 보존 검사가 있습니다. 인계 도구 검사는 임시 가상 경로와 키만 사용합니다.
+
+합성 검사에는 주간만 조건을 만족한 경우, 정확한 10% 경계, 다른 bucket, 소비 직전 조건 변경, 수동 사용으로 권이 사라짐, 상태 저장 실패, 같은 키 재시도, `noCredit`/`nothingToReset`/이미 사용, 단일 실행 잠금, 알림 권한 거부 등이 포함됩니다. `make test-live`는 선택적인 실제 **읽기 전용** 조회만 추가합니다.
+
+개인 Mac에서는 v1.1.0 감시기 인계에 이어 v1.1.1 메뉴 개선을 설치했습니다. 단일 native 감시기와 메뉴 앱, 실제 메뉴 구성(당시 정상 화면 17개 → 7개), 기존 설정 유지와 알림 허용 상태를 확인했습니다. 픽셀 캡처나 실제 만료 배너 전달을 검증한 것은 아닙니다. 계정 값과 로그는 이 저장소에 포함하지 않습니다. 실제 리셋권 소비를 검증 목적으로 실행하지 않았습니다.
+
+**실제 만료 배너 표시, 실제 조건부 소비, 재부팅·잠자기 복귀, 운영 롤백은 별도 미검증 항목입니다.** 저장소의 일반화한 인계 도구는 합성 검사 대상이며 개인 설치에 다시 적용하지 않았습니다. 1.1.1은 메뉴 표시 개선입니다. 소비·알림 조건과 감시기 실행 로직은 1.1.0과 같고, 새 UI의 실제 적용 여부는 로컬 설치 검증 기록으로 구분합니다. 자세한 범위는 [검증 문서](Docs/VALIDATION.md)를 참고하세요.
+
+### 가상 자료로 메뉴 미리보기
+
+실제 계정에 연결하지 않고 메뉴를 확인하려면 별도 개발 앱으로 빌드한 뒤 가상 자료를 선택합니다.
+
+```sh
+CODEX_USAGE_DEVELOPMENT=1 ./Scripts/build.sh .build/CodexUsageDev.app
+open -n .build/CodexUsageDev.app --args --preview "$PWD/Tests/Fixtures/ResetPreview" --at 1893452400
 ```
 
-## Compatibility note
+2030년 가상 자료만 사용하며 CLI나 실제 감시기에 연결하지 않습니다. 개발 앱은 별도 bundle identifier와 메뉴바 위치를 사용하므로 설치된 앱을 대체하지 않습니다. 화면에는 샘플 데이터라고 표시합니다.
 
-`codex app-server` and `account/rateLimits/read` are currently experimental Codex interfaces. A future Codex release may change them. This project fails closed and shows an error instead of reading authentication files directly.
+## 12. 보안·구조·지식관리
 
-## Contributing
+- 인증 파일·브라우저 쿠키·토큰을 읽거나 프로젝트에 복사하지 않습니다.
+- 사용량·알림은 자체 서버나 제3자에게 전송하지 않습니다. 기존 CLI가 사용자 로그인으로 OpenAI와 통신합니다.
+- Git에 `.build`, 실행 앱, 실제 설정·상태·로그·복구 백업을 넣지 않습니다. 예시는 가상 값입니다.
+- UI는 읽기 전용이며 실제 소비는 명시적으로 활성화한 단일 감시기만 담당합니다.
+- app-server 인터페이스가 바뀌면 조회/상태 오류를 표시합니다. 인증 파일 직접 접근이나 비공개 endpoint 추정으로 대체하지 않습니다.
 
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+[아키텍처](Docs/ARCHITECTURE.md), [운영·복구](Docs/OPERATIONS.md), [보안 정책](SECURITY.md), [변경 이력](CHANGELOG.md)을 함께 관리하세요. [provider-neutral manifest](project-manifest.json)는 지식관리 연결용 소형 메타데이터이며 특정 서비스에 대한 로그인이나 자동 동기화를 만들지 않습니다. 기존 지식관리 색인에 연결할 때는 실제 원격 ID·경로·commit을 관찰한 뒤 기존 자료를 갱신하고 사용자 저작·견해를 추정하지 않습니다.
 
-## Disclaimer
-
-This is an unofficial community project. It is not affiliated with, endorsed by, or supported by OpenAI. Codex and OpenAI are trademarks of their respective owner.
-
-## License
-
-[MIT](LICENSE)
+프로젝트 코드는 [MIT](LICENSE)입니다. Codex/OpenAI 상표는 소유자에게 속합니다. OpenAI가 보증하는 공식 제품이 아닙니다.

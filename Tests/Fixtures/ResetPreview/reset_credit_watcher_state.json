@@ -1,0 +1,9 @@
+{
+  "consume": {
+    "sample-used-credit": {
+      "outcome": "reset",
+      "lastAttemptAt": "2029-12-20T08:00:00+09:00"
+    }
+  },
+  "missed": {}
+}

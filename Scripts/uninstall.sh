@@ -4,6 +4,11 @@ set -euo pipefail
 APP_NAME="CodexUsage.app"
 APP_DEST="$HOME/Applications/$APP_NAME"
 SUPPORT_DIR="$HOME/Library/Application Support/CodexUsage"
+
+if [ -e "$SUPPORT_DIR/reset/worker.json" ]; then
+    echo "A reset worker is configured. Use its reviewed handoff/rollback procedure before changing the app or deleting its recovery state." >&2
+    exit 1
+fi
 LABEL="io.github.yulepapa.codex-usage-menubar"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"

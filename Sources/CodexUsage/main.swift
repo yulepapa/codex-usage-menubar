@@ -1,359 +1,8 @@
 import AppKit
 import Darwin
 import Foundation
+import UserNotifications
 
-private let appVersion = "1.0.0"
-
-private func localized(_ english: String, _ korean: String) -> String {
-    let language = Locale.preferredLanguages.first?.lowercased() ?? "en"
-    return language.hasPrefix("ko") ? korean : english
-}
-
-struct UsageWindow: Codable {
-    let slot: String
-    let usedPercent: Int
-    let windowDurationMins: Int?
-    let resetsAt: Int?
-
-    var remainingPercent: Int {
-        max(0, min(100, 100 - usedPercent))
-    }
-}
-
-struct CreditInfo: Codable {
-    let availableCount: Int?
-    let earliestExpiresAt: Int?
-}
-
-struct UsagePayload: Codable {
-    let bucketLabel: String?
-    let windows: [UsageWindow]
-    let credits: CreditInfo
-}
-
-enum UsageError: LocalizedError {
-    case codexNotFound
-    case launchFailed(String)
-    case timeout
-    case connectionClosed
-    case invalidResponse
-    case server(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .codexNotFound:
-            return localized(
-                "Codex CLI was not found. Re-run the installer with CODEX_PATH set.",
-                "Codex CLI를 찾지 못했습니다. CODEX_PATH를 지정해 설치기를 다시 실행하세요."
-            )
-        case .launchFailed(let message):
-            return localized("Could not start Codex: ", "Codex를 시작하지 못했습니다: ") + message
-        case .timeout:
-            return localized("The Codex usage request timed out.", "Codex 사용량 조회 시간이 초과됐습니다.")
-        case .connectionClosed:
-            return localized("Codex closed the connection unexpectedly.", "Codex 연결이 예기치 않게 종료됐습니다.")
-        case .invalidResponse:
-            return localized("Codex returned an invalid response.", "Codex가 올바르지 않은 응답을 반환했습니다.")
-        case .server(let message):
-            return message.isEmpty
-                ? localized("Codex returned an error.", "Codex가 오류를 반환했습니다.")
-                : message
-        }
-    }
-}
-
-enum CodexLocator {
-    static func locate(fileManager: FileManager = .default) -> String? {
-        let home = fileManager.homeDirectoryForCurrentUser.path
-
-        var candidates: [String] = []
-        if let configured = ProcessInfo.processInfo.environment["CODEX_PATH"] {
-            candidates.append(expandHome(configured, home: home))
-        }
-
-        let configPath = home + "/Library/Application Support/CodexUsage/codex-path"
-        if let configured = try? String(contentsOfFile: configPath, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !configured.isEmpty {
-            candidates.append(expandHome(configured, home: home))
-        }
-
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
-            for directory in path.split(separator: ":") where !directory.isEmpty {
-                candidates.append(String(directory) + "/codex")
-            }
-        }
-
-        candidates.append(contentsOf: [
-            home + "/.local/bin/codex",
-            home + "/.volta/bin/codex",
-            home + "/.bun/bin/codex",
-            home + "/.asdf/shims/codex",
-            home + "/.local/share/mise/shims/codex",
-            "/opt/homebrew/bin/codex",
-            "/usr/local/bin/codex",
-            "/usr/bin/codex"
-        ])
-
-        let nvmRoot = home + "/.nvm/versions/node"
-        if let versions = try? fileManager.contentsOfDirectory(atPath: nvmRoot) {
-            for version in versions.sorted(by: >) {
-                candidates.append(nvmRoot + "/" + version + "/bin/codex")
-            }
-        }
-
-        var seen = Set<String>()
-        return candidates.first { candidate in
-            guard candidate.hasPrefix("/"), seen.insert(candidate).inserted else { return false }
-            return fileManager.isExecutableFile(atPath: candidate)
-        }
-    }
-
-    private static func expandHome(_ path: String, home: String) -> String {
-        if path == "~" { return home }
-        if path.hasPrefix("~/") { return home + String(path.dropFirst()) }
-        return path
-    }
-}
-
-private final class FileDescriptorLineReader {
-    private let descriptor: Int32
-    private var buffer = Data()
-
-    init(descriptor: Int32) {
-        self.descriptor = descriptor
-    }
-
-    func readLine(deadline: Date) throws -> Data {
-        while true {
-            if let newline = buffer.firstIndex(of: 0x0A) {
-                let line = Data(buffer[..<newline])
-                buffer.removeSubrange(...newline)
-                return line
-            }
-
-            let remaining = deadline.timeIntervalSinceNow
-            guard remaining > 0 else { throw UsageError.timeout }
-            let timeoutMilliseconds = Int32(min(Double(Int32.max), max(1, remaining * 1_000)))
-            var descriptorState = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
-            let pollResult = withUnsafeMutablePointer(to: &descriptorState) {
-                Darwin.poll($0, 1, timeoutMilliseconds)
-            }
-
-            if pollResult == 0 { throw UsageError.timeout }
-            if pollResult < 0 {
-                if errno == EINTR { continue }
-                throw UsageError.connectionClosed
-            }
-            if descriptorState.revents & Int16(POLLNVAL | POLLERR) != 0 {
-                throw UsageError.connectionClosed
-            }
-
-            var chunk = [UInt8](repeating: 0, count: 4_096)
-            let count = chunk.withUnsafeMutableBytes { rawBuffer in
-                Darwin.read(descriptor, rawBuffer.baseAddress, rawBuffer.count)
-            }
-            if count == 0 {
-                if !buffer.isEmpty {
-                    let line = buffer
-                    buffer.removeAll(keepingCapacity: false)
-                    return line
-                }
-                throw UsageError.connectionClosed
-            }
-            if count < 0 {
-                if errno == EINTR { continue }
-                throw UsageError.connectionClosed
-            }
-            buffer.append(contentsOf: chunk.prefix(count))
-        }
-    }
-}
-
-enum UsageParser {
-    static func parseDocument(_ data: Data) throws -> UsagePayload {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw UsageError.invalidResponse
-        }
-        let result = (root["result"] as? [String: Any]) ?? root
-        return try parseResult(result)
-    }
-
-    static func parseResult(_ result: [String: Any]) throws -> UsagePayload {
-        let selected = selectRateLimitSnapshot(from: result)
-        let snapshot = selected.snapshot
-        var windows: [UsageWindow] = []
-
-        for slot in ["primary", "secondary"] {
-            guard let window = snapshot[slot] as? [String: Any],
-                  let usedPercent = integer(window["usedPercent"]) else { continue }
-            windows.append(
-                UsageWindow(
-                    slot: slot,
-                    usedPercent: max(0, min(100, usedPercent)),
-                    windowDurationMins: integer(window["windowDurationMins"]),
-                    resetsAt: integer(window["resetsAt"])
-                )
-            )
-        }
-
-        let creditsObject = result["rateLimitResetCredits"] as? [String: Any]
-        let availableCount = integer(creditsObject?["availableCount"])
-        let creditRows = creditsObject?["credits"] as? [[String: Any]] ?? []
-        let expirations = creditRows.compactMap { credit -> Int? in
-            guard (credit["status"] as? String)?.lowercased() == "available" else { return nil }
-            return integer(credit["expiresAt"])
-        }
-
-        return UsagePayload(
-            bucketLabel: selected.label,
-            windows: windows,
-            credits: CreditInfo(
-                availableCount: availableCount,
-                earliestExpiresAt: expirations.min()
-            )
-        )
-    }
-
-    private static func selectRateLimitSnapshot(from result: [String: Any]) -> (snapshot: [String: Any], label: String?) {
-        if let buckets = result["rateLimitsByLimitId"] as? [String: Any] {
-            if let codex = buckets["codex"] as? [String: Any] {
-                return (codex, displayLabel(snapshot: codex, fallback: "codex"))
-            }
-            if buckets.count == 1,
-               let pair = buckets.first,
-               let snapshot = pair.value as? [String: Any] {
-                return (snapshot, displayLabel(snapshot: snapshot, fallback: pair.key))
-            }
-        }
-
-        let legacy = result["rateLimits"] as? [String: Any] ?? [:]
-        return (legacy, displayLabel(snapshot: legacy, fallback: nil))
-    }
-
-    private static func displayLabel(snapshot: [String: Any], fallback: String?) -> String? {
-        if let name = snapshot["limitName"] as? String, !name.isEmpty { return name }
-        if let identifier = snapshot["limitId"] as? String, !identifier.isEmpty { return identifier }
-        return fallback
-    }
-
-    private static func integer(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
-        return number.intValue
-    }
-}
-
-final class CodexAppServerClient {
-    private let timeout: TimeInterval
-
-    init(timeout: TimeInterval = 25) {
-        self.timeout = timeout
-    }
-
-    func fetch(codexPath: String? = nil) throws -> UsagePayload {
-        guard let executable = codexPath ?? CodexLocator.locate() else {
-            throw UsageError.codexNotFound
-        }
-
-        let process = Process()
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
-        let nullOutput = FileHandle(forWritingAtPath: "/dev/null")
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["app-server", "--stdio"]
-        process.standardInput = inputPipe
-        process.standardOutput = outputPipe
-        process.standardError = nullOutput
-
-        do {
-            try process.run()
-        } catch {
-            throw UsageError.launchFailed(error.localizedDescription)
-        }
-
-        defer {
-            try? inputPipe.fileHandleForWriting.close()
-            stop(process)
-            try? nullOutput?.close()
-        }
-
-        let writer = inputPipe.fileHandleForWriting
-        let reader = FileDescriptorLineReader(descriptor: outputPipe.fileHandleForReading.fileDescriptor)
-        let deadline = Date().addingTimeInterval(timeout)
-
-        try send(
-            [
-                "id": 1,
-                "method": "initialize",
-                "params": [
-                    "clientInfo": ["name": "codex-usage-menubar", "version": appVersion],
-                    "capabilities": ["experimentalApi": true]
-                ]
-            ],
-            to: writer
-        )
-
-        var usageRequested = false
-        while true {
-            let line = try reader.readLine(deadline: deadline)
-            guard !line.isEmpty,
-                  let message = try JSONSerialization.jsonObject(with: line) as? [String: Any] else {
-                continue
-            }
-            let responseID = (message["id"] as? NSNumber)?.intValue
-
-            if responseID == 1, !usageRequested {
-                if let error = message["error"] {
-                    throw UsageError.server(serverErrorMessage(error))
-                }
-                try send(["method": "initialized", "params": [:]], to: writer)
-                try send(
-                    ["id": 2, "method": "account/rateLimits/read"],
-                    to: writer
-                )
-                usageRequested = true
-            } else if responseID == 2 {
-                if let error = message["error"] {
-                    throw UsageError.server(serverErrorMessage(error))
-                }
-                guard let result = message["result"] as? [String: Any] else {
-                    throw UsageError.invalidResponse
-                }
-                return try UsageParser.parseResult(result)
-            }
-        }
-    }
-
-    private func send(_ object: [String: Any], to writer: FileHandle) throws {
-        var data = try JSONSerialization.data(withJSONObject: object, options: [])
-        data.append(0x0A)
-        do {
-            try writer.write(contentsOf: data)
-        } catch {
-            throw UsageError.connectionClosed
-        }
-    }
-
-    private func stop(_ process: Process) {
-        guard process.isRunning else { return }
-        process.terminate()
-        let deadline = Date().addingTimeInterval(2)
-        while process.isRunning, deadline.timeIntervalSinceNow > 0 {
-            usleep(20_000)
-        }
-        if process.isRunning {
-            Darwin.kill(process.processIdentifier, SIGKILL)
-        }
-    }
-
-    private func serverErrorMessage(_ error: Any) -> String {
-        if let object = error as? [String: Any], let message = object["message"] as? String {
-            return message
-        }
-        return localized("Codex app-server returned an error.", "Codex app-server가 오류를 반환했습니다.")
-    }
-}
 
 final class UsageFetcher {
     private let client = CodexAppServerClient()
@@ -381,7 +30,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var latestSnapshot: UsagePayload?
     private var lastUpdated: Date?
     private var lastError: String?
+    private var usageWarning: String?
+    private var settingsWarning: String?
     private var isRefreshing = false
+    private var watcher = ResetWatcherSnapshot()
+    private let previewDirectory: URL?
+    private let previewDate: Date?
+
+    init(previewDirectory: URL? = nil, previewDate: Date? = nil) {
+        self.previewDirectory = previewDirectory
+        self.previewDate = previewDate
+        super.init()
+    }
+
+    private var displayDate: Date { previewDate ?? Date() }
+
+    private func readWatcher() {
+        watcher = ResetWatcherReader.read(directory: previewDirectory ?? ResetWatcherReader.defaultDirectory(), now: displayDate)
+    }
 
     private var refreshInterval: TimeInterval {
         guard let raw = ProcessInfo.processInfo.environment["CODEX_USAGE_REFRESH_SECONDS"],
@@ -396,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.autosaveName = "CodexUsage"
+        statusItem.autosaveName = previewDirectory == nil ? "CodexUsage" : "CodexUsagePreview"
         statusItem.button?.image = StatusIcon.make()
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.imageScaling = .scaleNone
@@ -406,6 +72,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.setAccessibilityValue(localized("Checking usage", "사용량 확인 중"))
         statusItem.menu = menu
 
+        if previewDirectory == nil && (try? ResetStore.standard.settings().reminders) == true
+            && FileManager.default.fileExists(atPath: ResetStore.standard.directory.path) {
+            requestNotificationPermission()
+        }
+        readWatcher()
         rebuildMenu()
         refreshUsage()
 
@@ -429,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        readWatcher()
         rebuildMenu()
         if lastUpdated.map({ Date().timeIntervalSince($0) > 90 }) ?? true {
             refreshUsage()
@@ -436,6 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func workspaceDidWake() {
+        if previewDirectory == nil && FileManager.default.fileExists(atPath: ResetStore.standard.directory.appendingPathComponent("ownership.json").path) {
+            try? ResetStore.standard.write("wake.json", ["at": Date().timeIntervalSince1970])
+        }
         refreshUsage()
     }
 
@@ -449,6 +124,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func refreshUsage() {
         guard !isRefreshing else { return }
+        readWatcher()
+        if let directory = previewDirectory {
+            do {
+                latestSnapshot = try UsageParser.parseDocument(Data(contentsOf: directory.appendingPathComponent("usage.json")))
+                lastUpdated = displayDate
+                lastError = nil
+                if let snapshot = latestSnapshot { updateStatusTitle(using: snapshot) }
+            } catch { lastError = localized("Preview fixture unavailable", "미리보기 샘플을 읽을 수 없습니다") }
+            rebuildMenu()
+            return
+        }
         isRefreshing = true
         if latestSnapshot == nil {
             statusItem.button?.title = "…"
@@ -464,9 +150,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.latestSnapshot = snapshot
                 self.lastUpdated = Date()
                 self.lastError = nil
+                self.usageWarning = nil
                 self.updateStatusTitle(using: snapshot)
             case .failure(let error):
                 self.lastError = error.localizedDescription
+                self.usageWarning = UsageMenuWarning.text(for: error)
                 if self.latestSnapshot == nil {
                     self.statusItem.button?.title = "!"
                     self.statusItem.button?.setAccessibilityValue(
@@ -514,108 +202,154 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildMenu() {
         menu.removeAllItems()
-
-        let heading = NSMenuItem(title: localized("Codex Usage", "Codex 사용량"), action: nil, keyEquivalent: "")
-        heading.isEnabled = false
-        heading.attributedTitle = NSAttributedString(
-            string: localized("Codex Usage", "Codex 사용량"),
-            attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]
-        )
-        menu.addItem(heading)
-        menu.addItem(.separator())
+        if previewDirectory != nil { addInfoItem(localized("SAMPLE DATA", "샘플 데이터")) }
+        let details = NSMenu()
+        details.autoenablesItems = false
 
         if let snapshot = latestSnapshot {
-            if let bucket = snapshot.bucketLabel,
-               bucket.caseInsensitiveCompare("codex") != .orderedSame {
+            if let bucket = snapshot.bucketLabel, bucket.caseInsensitiveCompare("codex") != .orderedSame {
                 addInfoItem(localized("Limit: ", "한도: ") + bucket)
-                menu.addItem(.separator())
             }
-
             let windows = orderedWindows(snapshot.windows)
-            if windows.isEmpty {
-                addInfoItem(localized("No usage windows are available.", "표시할 사용량 구간이 없습니다."))
-            } else {
-                for (index, window) in windows.enumerated() {
-                    addInfoItem(
-                        windowLabel(window) + localized(" remaining ", " 남음 ") + "\(window.remainingPercent)%"
-                    )
-                    if let reset = window.resetsAt {
-                        addInfoItem(
-                            localized("  Resets ", "  초기화 ")
-                                + formatDate(timestamp: reset)
-                                + " · "
-                                + relativeTime(timestamp: reset)
-                        )
-                    }
-                    if index < windows.count - 1 { menu.addItem(.separator()) }
-                }
-            }
-
-            if let creditCount = snapshot.credits.availableCount {
-                menu.addItem(.separator())
-                addInfoItem(
-                    localized("Reset credits: ", "초기화권 ")
-                        + "\(creditCount)"
-                        + localized("", "장")
-                )
-                if let expiration = snapshot.credits.earliestExpiresAt, creditCount > 0 {
-                    addInfoItem(
-                        localized("  Earliest expiry ", "  가장 빠른 만료 ")
-                            + formatDate(timestamp: expiration)
-                    )
+            if windows.isEmpty { addInfoItem(localized("Usage windows unavailable", "사용량 구간 확인 필요")) }
+            for window in windows {
+                addInfoItem(windowLabel(window) + localized(" remaining ", " 남음 ")
+                    + "\(window.remainingPercent)%", bold: true)
+                if let reset = window.resetsAt {
+                    addInfoItem(windowLabel(window) + localized(" resets ", " 초기화 ")
+                        + formatDate(timestamp: reset) + " · " + relativeTime(timestamp: reset), to: details)
                 }
             }
         } else {
-            addInfoItem(
-                isRefreshing
-                    ? localized("Checking usage…", "사용량을 확인하는 중…")
-                    : localized("Usage is unavailable.", "사용량을 불러오지 못했습니다.")
-            )
-        }
-
-        if let error = lastError {
-            menu.addItem(.separator())
-            addInfoItem(
-                localized("Latest error: ", "최근 조회 오류: ") + shortened(error, limit: 90)
-            )
+            addInfoItem(isRefreshing ? localized("Checking usage…", "사용량 확인 중…")
+                : localized("Usage unavailable", "사용량 확인 필요"))
         }
 
         menu.addItem(.separator())
-        if let updated = lastUpdated {
-            addInfoItem(localized("Last checked ", "마지막 확인 ") + formatTime(updated))
+        let creditsAreFresh = lastError == nil && (lastUpdated.map {
+            displayDate.timeIntervalSince($0) <= refreshInterval + 90
+        } ?? false)
+        let native = previewDirectory == nil && FileManager.default.fileExists(atPath:
+            ResetStore.standard.directory.appendingPathComponent("ownership.json").path)
+        let reset: ResetMenuPresentation
+        if native {
+            reset = NativeResetSection.compact(store: .standard, now: displayDate)
+        } else {
+            reset = ResetMenuPresentation.legacy(credits: creditsAreFresh ? latestSnapshot?.credits : nil,
+                                                watcher: watcher, now: displayDate)
         }
-        addInfoItem(
-            localized("Refresh interval: ", "자동 갱신: ") + formatRefreshInterval(refreshInterval)
-        )
+        addInfoItem(reset.title, bold: true)
+        if let expiry = reset.expiry { addInfoItem(expiry) }
 
-        let refreshItem = NSMenuItem(
-            title: isRefreshing
-                ? localized("Refreshing…", "새로고침 중…")
-                : localized("Refresh Now", "지금 새로고침"),
-            action: #selector(refreshNow),
-            keyEquivalent: "r"
-        )
+        if native {
+            let settings = try? ResetStore.standard.settings()
+            let canEdit = (try? ResetStore.standard.active()) == true
+            addToggle(settings?.autoUse == true ? localized("Auto-use: On", "자동 사용 켜짐")
+                : localized("Auto-use: Off", "자동 사용 꺼짐"), checked: settings?.autoUse == true,
+                action: #selector(toggleAutoUse), enabled: canEdit)
+            addToggle(localized("Expiry notifications", "만료 전 Mac 알림"), checked: settings?.reminders == true,
+                action: #selector(toggleReminders), enabled: canEdit, to: details)
+            details.addItem(.separator())
+            for row in NativeResetSection.rows(store: .standard, now: displayDate) { addInfoItem(row, to: details) }
+        } else {
+            addInfoItem(watcher.isPresent ? localized("Auto-use: existing watcher", "자동 사용: 기존 감시기")
+                : localized("Auto-use: not configured", "자동 사용: 미설정"))
+            details.addItem(.separator())
+            for row in ResetSection.rows(credits: creditsAreFresh ? latestSnapshot?.credits : nil,
+                                         watcher: watcher, now: displayDate) { addInfoItem(row, to: details) }
+        }
+
+        var warnings = reset.warnings
+        if let warning = settingsWarning { warnings.insert(warning, at: 0) }
+        if let warning = usageWarning { warnings.insert(warning, at: 0) }
+        else if lastUpdated.map({ displayDate.timeIntervalSince($0) > refreshInterval + 90 }) == true {
+            warnings.insert(localized("Usage data needs refresh", "사용량 최신 확인 필요"), at: 0)
+        }
+        if !warnings.isEmpty {
+            menu.addItem(.separator())
+            var seen = Set<String>()
+            for warning in warnings where seen.insert(warning).inserted { addInfoItem("⚠︎ " + warning) }
+        }
+
+        details.addItem(.separator())
+        if lastError != nil { addInfoItem(usageWarning ?? localized("Latest usage check failed", "최근 사용량 조회 실패"), to: details) }
+        if let updated = lastUpdated { addInfoItem(localized("Last checked ", "마지막 확인 ") + formatTime(updated), to: details) }
+        addInfoItem(localized("Refresh interval: ", "자동 갱신: ") + formatRefreshInterval(refreshInterval), to: details)
+
+        menu.addItem(.separator())
+        let detailItem = NSMenuItem(title: localized("Details", "상세"), action: nil, keyEquivalent: "")
+        detailItem.submenu = details
+        detailItem.isEnabled = true
+        menu.addItem(detailItem)
+        let refreshItem = NSMenuItem(title: isRefreshing ? localized("Refreshing…", "새로고침 중…")
+            : localized("Refresh Now", "새로고침"), action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
         refreshItem.keyEquivalentModifierMask = [.command]
         refreshItem.isEnabled = !isRefreshing
         menu.addItem(refreshItem)
-
-        menu.addItem(.separator())
-        let quitItem = NSMenuItem(
-            title: localized("Quit Codex Usage", "Codex 사용량 종료"),
-            action: #selector(quitApp),
-            keyEquivalent: "q"
-        )
+        let quitItem = NSMenuItem(title: localized("Quit", "종료"), action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         quitItem.keyEquivalentModifierMask = [.command]
-        quitItem.isEnabled = true
         menu.addItem(quitItem)
+
+        let args = CommandLine.arguments
+        if let index = args.firstIndex(of: "--export-menu-state"), args.indices.contains(index + 1) {
+            let payload: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
+                                          "rows": menuRows(menu), "version": appVersion]
+            if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: URL(fileURLWithPath: args[index + 1]), options: .atomic)
+            }
+        }
     }
 
-    private func addInfoItem(_ title: String) {
+    private func menuRows(_ target: NSMenu) -> [[String: Any]] {
+        target.items.filter { !$0.isSeparatorItem }.map { item in
+            var row: [String: Any] = ["title": item.title, "enabled": item.isEnabled,
+                                      "checked": item.state == .on, "bold": item.attributedTitle != nil]
+            if let submenu = item.submenu { row["submenu"] = menuRows(submenu) }
+            return row
+        }
+    }
+
+    private func addToggle(_ title: String, checked: Bool, action: Selector, enabled: Bool, to target: NSMenu? = nil) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self; item.state = checked ? .on : .off; item.isEnabled = enabled
+        (target ?? menu).addItem(item)
+    }
+
+    @objc private func toggleAutoUse() {
+        do {
+            try ResetStore.standard.updateSettings { $0.autoUse.toggle() }
+            try ResetStore.standard.write("wake.json", ["at": Date().timeIntervalSince1970])
+            settingsWarning = nil
+        }
+        catch { settingsWarning = localized("Could not save auto-use setting", "자동 사용 설정 저장 실패") }
+        rebuildMenu()
+    }
+
+    @objc private func toggleReminders() {
+        do {
+            try ResetStore.standard.updateSettings { $0.reminders.toggle() }
+            try ResetStore.standard.write("wake.json", ["at": Date().timeIntervalSince1970])
+            if try ResetStore.standard.settings().reminders { requestNotificationPermission() }
+            settingsWarning = nil
+        } catch { settingsWarning = localized("Could not save notification setting", "알림 설정 저장 실패") }
+        rebuildMenu()
+    }
+
+    private func requestNotificationPermission() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = ResetNotificationDelegate.shared
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in
+            DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
+        }
+    }
+
+    private func addInfoItem(_ title: String, bold: Bool = false, to target: NSMenu? = nil) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
-        menu.addItem(item)
+        if bold { item.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]) }
+        (target ?? menu).addItem(item)
     }
 
     private func windowLabel(_ window: UsageWindow) -> String {
@@ -681,7 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         formatter.unitsStyle = .full
         return formatter.localizedString(
             for: Date(timeIntervalSince1970: TimeInterval(timestamp)),
-            relativeTo: Date()
+            relativeTo: displayDate
         )
     }
 
@@ -715,6 +449,37 @@ private func printPayload(_ payload: UsagePayload) throws {
 }
 
 private func runCommandLineMode(_ arguments: [String]) -> Int32? {
+    if arguments.contains("--notification-status") { print(MacResetNotifier().status); return EXIT_SUCCESS }
+    if arguments.contains("--reset-worker") { return ResetWorker.run() }
+    if arguments.contains("--check-reset-worker") {
+        do {
+            let snapshot = try LiveResetService().read()
+            guard snapshot.isCoreCodex, !snapshot.windows.isEmpty else { return EXIT_FAILURE }
+            print("Read-only worker preflight passed")
+            return EXIT_SUCCESS
+        } catch { writeStandardError("Read-only worker preflight failed"); return EXIT_FAILURE }
+    }
+    if arguments.contains("--print-native-reset-status") {
+        for row in NativeResetSection.rows(store: .standard, now: Date()) { print(row) }
+        return EXIT_SUCCESS
+    }
+
+    if arguments.contains("--print-reset-status") {
+        let now = Date()
+        let watcher = ResetWatcherReader.read(now: now)
+        let output: [String: Any] = [
+            "health": watcher.health(at: now).rawValue,
+            "mode": "read-only",
+            "rows": ResetSection.rows(credits: nil, watcher: watcher, now: now)
+        ]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data([0x0A]))
+            return EXIT_SUCCESS
+        } catch { return EXIT_FAILURE }
+    }
+
     if arguments.contains("--version") {
         print(appVersion)
         return EXIT_SUCCESS
@@ -753,6 +518,20 @@ if let exitCode = runCommandLineMode(Array(CommandLine.arguments.dropFirst())) {
 }
 
 let application = NSApplication.shared
-let delegate = AppDelegate()
+let arguments = Array(CommandLine.arguments.dropFirst())
+var previewDirectory: URL?
+var previewDate: Date?
+if let index = arguments.firstIndex(of: "--preview") {
+    guard arguments.indices.contains(index + 1) else {
+        writeStandardError("--preview requires a fixture directory")
+        exit(EXIT_FAILURE)
+    }
+    previewDirectory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
+    if let at = arguments.firstIndex(of: "--at"), arguments.indices.contains(at + 1),
+       let seconds = Double(arguments[at + 1]), seconds.isFinite {
+        previewDate = Date(timeIntervalSince1970: seconds)
+    }
+}
+let delegate = AppDelegate(previewDirectory: previewDirectory, previewDate: previewDate)
 application.delegate = delegate
 application.run()
