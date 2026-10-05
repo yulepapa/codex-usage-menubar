@@ -1,4 +1,23 @@
 import Foundation
+import Darwin
+
+enum SimulatedResetError: Error { case responseTimeout }
+
+// The fake server records a reset before losing its response. A repeated key
+// confirms the original result without performing another logical redemption.
+final class ResponseLossResetService: ResetService {
+    let payload: UsagePayload
+    var calls: [(String, String)] = []
+    var redeemed: [String: String] = [:]
+    init(payload: UsagePayload) { self.payload = payload }
+    func read() throws -> UsagePayload { payload }
+    func consume(credit: ResetCredit, key: String) throws -> String {
+        calls.append((credit.id, key))
+        if redeemed[key] == credit.id { return "alreadyRedeemed" }
+        redeemed[key] = credit.id
+        throw SimulatedResetError.responseTimeout
+    }
+}
 
 final class FakeResetService: ResetService {
     var snapshots: [UsagePayload] = []
@@ -29,6 +48,14 @@ final class FakeResetNotifier: ResetNotifier {
 
 @main enum ResetEngineTests {
     static func main() throws {
+        if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--lease-probe" {
+            do {
+                let lease = try ResetLease(url: URL(fileURLWithPath: CommandLine.arguments[2]).appendingPathComponent("worker.lock"))
+                withExtendedLifetime(lease) {}
+                exit(2)
+            } catch ResetStorageError.locked { exit(0) }
+            catch { exit(3) }
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("CodexUsage-engine-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         var now = Date(timeIntervalSince1970: 2_000_000_000)
@@ -145,9 +172,106 @@ final class FakeResetNotifier: ResetNotifier {
         engine = try reset(); notifier.status = "denied"; service.fallback = snapshot(primary: 0)
         try engine.tick(active: true)
         check(notifier.delivered.isEmpty && tryState(store).notificationStatus == "denied", "denied notification permission is visible without bypass")
+
+        let second = ResetCredit(id: "synthetic-second", expiresAt: expiry.addingTimeInterval(10))
+        now = expiry.addingTimeInterval(-1100)
+        engine = try reset(); service.fallback = snapshot(credits: [credit, second]); service.failConsume = true
+        try engine.tick(active: true)
+        let pendingKey = service.calls.first!.1
+        now = now.addingTimeInterval(60); service.failConsume = false
+        engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+        try engine.tick(active: true)
+        check(service.calls.count == 1 && tryState(store).attempts[second.id] == nil,
+              "retry delay blocks another credit's new consumption after restart")
+        check(tryState(store).attempts[credit.id]?.key == pendingKey && tryState(store).lastError == "resultUnknown",
+              "deferred pending intent preserves its key and review warning")
+        check(tryState(store).reminders[second.id]?.contains(1200) == true,
+              "pending recovery does not suppress another credit's expiry reminder")
+        now = now.addingTimeInterval(121); service.outcome = "alreadyRedeemed"
+        try engine.tick(active: true)
+        check(service.calls.count == 2 && service.calls.last!.0 == credit.id && service.calls.last!.1 == pendingKey,
+              "eligible recovery retries only the uncertain credit with its original key")
+        check(tryState(store).lastError == nil && tryState(store).attempts[credit.id]?.outcome == "alreadyRedeemed",
+              "authoritative replay confirmation clears the unresolved warning")
+        try engine.tick(active: true)
+        check(service.calls.count == 2, "confirmed recovery starts the existing cooldown before another credit")
+
+        now = expiry.addingTimeInterval(-1100)
+        engine = try reset(); service.fallback = snapshot(credits: [credit, second]); service.failConsume = true
+        try engine.tick(active: true)
+        service.failConsume = false; now = now.addingTimeInterval(181)
+        service.snapshots = [snapshot(credits: [credit, second]), snapshot(credits: [second])]
+        service.fallback = snapshot(credits: [second])
+        try engine.tick(active: true)
+        check(service.calls.count == 1 && tryState(store).phase == "needsReview",
+              "uncertain credit disappearing during fresh read blocks new consumption in the same cycle")
+        engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+        try engine.tick(active: true)
+        check(service.calls.count == 1 && tryState(store).attempts[credit.id]?.outcome == "pending",
+              "absence after restart cannot be inferred as successful redemption")
+
+        now = expiry.addingTimeInterval(-1100)
+        engine = try reset(); service.fallback = snapshot(credits: [credit, second]); service.failConsume = true
+        try engine.tick(active: true)
+        service.failConsume = false; now = now.addingTimeInterval(181)
+        service.snapshots = [snapshot(credits: [credit, second]), snapshot(primary: 0, credits: [credit, second])]
+        try engine.tick(active: true)
+        check(service.calls.count == 1 && tryState(store).lastError == "resultUnknown",
+              "fresh ineligibility preserves pending work and blocks another credit")
+        let shifted = ResetCredit(id: credit.id, expiresAt: expiry.addingTimeInterval(30))
+        service.fallback = snapshot(credits: [shifted, second])
+        try engine.tick(active: true)
+        check(service.calls.count == 1 && tryState(store).attempts[credit.id]?.expiresAt == expiry,
+              "changed expiry cannot replace a pending intent or authorize another credit")
+        service.failRead = true
+        try engine.tick(active: true)
+        check(service.calls.count == 1 && tryState(store).attempts[credit.id]?.outcome == "pending",
+              "read timeout cannot discard pending work or consume another credit")
+
+        now = expiry.addingTimeInterval(-1100)
+        engine = try reset(); service.fallback = snapshot(credits: [credit, second]); service.outcome = "alreadyRedeemed"
+        let third = ResetCredit(id: "synthetic-third", expiresAt: expiry.addingTimeInterval(-10))
+        service.fallback = snapshot(credits: [third, credit, second])
+        var multiple = try store.state()
+        multiple.attempts[credit.id] = Redemption(key: "synthetic-old-A", expiresAt: expiry, attemptedAt: now.addingTimeInterval(-181), outcome: "pending")
+        multiple.attempts[second.id] = Redemption(key: "synthetic-old-B", expiresAt: second.expiresAt, attemptedAt: now.addingTimeInterval(-181), outcome: "pending")
+        try store.write("state.json", multiple)
+        try engine.tick(active: true)
+        check(service.calls.count == 1 && service.calls.first!.0 == credit.id && service.calls.first!.1 == "synthetic-old-A",
+              "multiple pending intents exclude an earlier-expiring unattempted credit")
+        check(tryState(store).lastError == "resultUnknown" && tryState(store).attempts[second.id]?.outcome == "pending",
+              "confirming one pending result keeps the remaining uncertainty visible")
+        now = now.addingTimeInterval(301)
+        engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+        try engine.tick(active: true)
+        check(service.calls.count == 2 && service.calls.last!.0 == second.id && service.calls.last!.1 == "synthetic-old-B",
+              "multiple-intent recovery preserves each stored key across restart and cooldown")
+
+        now = expiry.addingTimeInterval(-1100)
+        engine = try reset()
+        let loss = ResponseLossResetService(payload: snapshot(credits: [credit, second]))
+        engine = ResetEngine(store: store, service: loss, notifier: notifier, clock: { now })
+        try engine.tick(active: true)
+        now = now.addingTimeInterval(60)
+        engine = ResetEngine(store: store, service: loss, notifier: notifier, clock: { now })
+        try engine.tick(active: true)
+        check(loss.calls.count == 1 && loss.redeemed.count == 1,
+              "server reset followed by response timeout does not consume a second credit")
+        now = now.addingTimeInterval(121)
+        try engine.tick(active: true)
+        check(loss.calls.count == 2 && loss.calls[0].1 == loss.calls[1].1 && loss.redeemed.count == 1,
+              "response-loss recovery confirms the same logical redemption without a new reset")
+        check(tryState(store).attempts[credit.id]?.outcome == "alreadyRedeemed" && tryState(store).attempts[second.id] == nil,
+              "fresh read alone is not confirmation; authoritative same-key response resolves pending work")
+
         let lease = try ResetLease(url: root.appendingPathComponent("worker.lock"))
         do { _ = try ResetLease(url: root.appendingPathComponent("worker.lock")); check(false, "second worker lock") }
         catch { check(true, "second worker cannot acquire the execution lease") }
+        let probe = Process()
+        probe.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        probe.arguments = ["--lease-probe", root.path]
+        try probe.run(); probe.waitUntilExit()
+        check(probe.terminationStatus == 0, "separate worker process cannot acquire the held execution lease")
         withExtendedLifetime(lease) {}
         let agent = root.appendingPathComponent("worker.plist")
         try store.write("worker.json", ["label":"test.worker", "executable":"/test/app", "launchAgent":agent.path])

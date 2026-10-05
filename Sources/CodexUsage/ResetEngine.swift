@@ -156,7 +156,14 @@ final class ResetEngine {
         // A previous uncertain result must be reconciled with the same key.
         // Missing credit/eligibility never becomes assumed success or a new use.
         let unresolved = state.attempts.filter { $0.value.outcome == "pending" }
-        if unresolved.contains(where: { !availableIDs.contains($0.key) || $0.value.expiresAt <= clock() }) {
+        if !unresolved.isEmpty {
+            state.phase = "needsReview"; state.lastError = "resultUnknown"
+        }
+        if unresolved.contains(where: { entry in
+            entry.value.expiresAt <= clock() || !state.inventory.contains(where: {
+                $0.id == entry.key && $0.expiresAt == entry.value.expiresAt
+            })
+        }) {
             state.phase = "needsReview"; state.lastError = "resultUnknown"; try save(state); return
         }
         for credit in state.inventory {
@@ -165,7 +172,11 @@ final class ResetEngine {
             if let attempt = state.attempts[credit.id], ["reset", "alreadyRedeemed", "noCredit"].contains(attempt.outcome) {
                 notifier.clear(credit: credit); continue
             }
-            if settings.autoUse && !coolingDown && remaining <= 1200 {
+            // Until uncertain work is reconciled, only retry a recorded intent.
+            // Waiting for its 180-second retry must not fall through to a new credit.
+            let mayAttempt = unresolved.isEmpty
+                || (unresolved[credit.id] != nil && state.attempts[credit.id]?.outcome == "pending")
+            if mayAttempt && settings.autoUse && !coolingDown && remaining <= 1200 {
                 // Refresh immediately before redemption, independently of UI/notification work.
                 let fresh: UsagePayload
                 do { fresh = try service.read() }
@@ -173,6 +184,10 @@ final class ResetEngine {
                 guard fresh.resetCredits.contains(where: { $0.id == credit.id }) else {
                     notifier.clear(credit: credit)
                     state.inventory = fresh.resetCredits; state.availableCount = fresh.credits.availableCount
+                    if unresolved[credit.id] != nil {
+                        state.phase = "needsReview"; state.lastError = "resultUnknown"
+                        try save(state); return
+                    }
                     continue
                 }
                 if fresh.eligibleForReset,
@@ -200,6 +215,9 @@ final class ResetEngine {
                     }
                     state.attempts[credit.id]?.outcome = outcome
                     state.phase = outcome
+                    if state.attempts.values.contains(where: { $0.outcome == "pending" }) {
+                        state.phase = "needsReview"; state.lastError = "resultUnknown"
+                    } else { state.lastError = nil }
                     try save(state)
                     if ["reset", "alreadyRedeemed", "noCredit"].contains(outcome) {
                         notifier.clear(credit: credit)

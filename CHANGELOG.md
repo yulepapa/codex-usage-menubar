@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2 — 2026-10-06
+
+- Block new redemptions of other credits while any prior result remains unconfirmed, including the retry delay and process restart.
+- Reconcile only saved pending intents with their original keys; keep review warnings until every uncertain result is resolved.
+- Preserve expiry reminders while new consumption is held; add multi-credit, response-loss, fresh-read and separate-process lease regressions.
+
 ## 1.1.1 — 2026-10-05
 
 - Reduce the main menu to usage, credit count/expiry and auto-use; move normal state/history/notification settings into Details.
