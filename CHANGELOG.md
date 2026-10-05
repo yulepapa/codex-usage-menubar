@@ -1,18 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-10-05
 
-- Replace the menu bar's Codex text prefix with the original Codex outline icon
-- Adapt the icon to the menu bar appearance while keeping usage percentages and accessibility labels
-- Add a full Korean README with English/Korean language links
+- Native single-worker reset use with fresh eligibility checks, durable recovery and process lease.
+- Independent menu switches; native expiry reminders at 1 hour, 20 minutes and 5 minutes.
+- Explicit legacy handoff and recovery helper, protected usage-only installer/uninstaller.
+- Sanitized status adapter, fictitious offline preview and reset/time-zone/mock RPC tests.
+- Canonical behavior, architecture, operations and validation documentation; provider-neutral project manifest.
+- Existing Codex outline icon, usage display and login startup preserved.
 
-## 1.0.0 - 2026-09-03
+## 1.0.0 — 2026-09-03
 
-- Initial public release
-- Native macOS menu bar display for remaining Codex usage
-- Short-window and weekly-window support
-- Reset time and reset-credit details
-- English and Korean interface
-- Five-minute automatic refresh and manual refresh
-- Login startup installer and uninstaller
-- Native Swift implementation with no Python dependency
+- Initial native usage display, short/weekly windows, reset details, English/Korean interface, five-minute refresh and login installer.

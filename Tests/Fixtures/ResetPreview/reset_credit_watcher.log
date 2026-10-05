@@ -1,0 +1,2 @@
+{"time":"2030-01-01T07:45:00+09:00","message":"thread notification failed","error":"sample only"}
+{"time":"2030-01-01T07:59:00+09:00","message":"watch cycle complete","expiresAt":"2030-01-01T09:15:00+09:00","nextCheckSeconds":3600,"dryRun":false}

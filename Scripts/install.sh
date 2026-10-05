@@ -6,6 +6,11 @@ APP_NAME="CodexUsage.app"
 APP_PARENT="$HOME/Applications"
 APP_DEST="$APP_PARENT/$APP_NAME"
 SUPPORT_DIR="$HOME/Library/Application Support/CodexUsage"
+
+if [ -e "$SUPPORT_DIR/reset/worker.json" ]; then
+    echo "A reset worker is configured. Use its reviewed handoff/rollback procedure before changing the app or deleting its recovery state." >&2
+    exit 1
+fi
 LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
 LABEL="io.github.yulepapa.codex-usage-menubar"
 PLIST="$LAUNCH_AGENT_DIR/$LABEL.plist"

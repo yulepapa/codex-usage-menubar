@@ -1,0 +1,18 @@
+{
+  "result": {
+    "rateLimitsByLimitId": {
+      "codex": {
+        "limitId": "codex", "limitName": "Codex",
+        "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1893459600},
+        "secondary": {"usedPercent": 77, "windowDurationMins": 10080, "resetsAt": 1893888000}
+      }
+    },
+    "rateLimitResetCredits": {
+      "availableCount": 2,
+      "credits": [
+        {"id":"sample-next-credit","expiresAt":1893456900,"resetType":"weekly","status":"available"},
+        {"id":"sample-later-credit","expiresAt":1896048000,"resetType":"weekly","status":"available"}
+      ]
+    }
+  }
+}

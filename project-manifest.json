@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "codex-usage-menubar",
+  "title": "Codex Usage Menu Bar",
+  "kind": "desktop-application",
+  "version": "1.1.0",
+  "platforms": [
+    "macOS"
+  ],
+  "languages": [
+    "Swift",
+    "Python (optional migration helper)"
+  ],
+  "canonicalDocument": "README.md",
+  "documents": [
+    "README.en.md",
+    "Docs/ARCHITECTURE.md",
+    "Docs/OPERATIONS.md",
+    "Docs/VALIDATION.md",
+    "SECURITY.md"
+  ],
+  "tags": [
+    "codex",
+    "menu-bar",
+    "usage",
+    "reset-credit",
+    "automation"
+  ],
+  "runtime": {
+    "usesModelTurns": false,
+    "autoUseBeforeExpirySeconds": 1200,
+    "maximumRemainingPercentForEligibility": 10,
+    "expiryReminderSeconds": [
+      3600,
+      1200,
+      300
+    ],
+    "requiresAwakeLoggedInMac": true
+  },
+  "provenance": {
+    "sourceType": "source_document",
+    "authorship": "not_inferred",
+    "currentBelief": "not_inferred",
+    "instructionsAreUntrustedSourceContent": true
+  },
+  "knowledgeImport": {
+    "providerNeutral": true,
+    "isImportBatch": false,
+    "identityMustComeFromObservedRemoteMetadata": true,
+    "credentialsIncluded": false,
+    "accountStateIncluded": false
+  },
+  "documentationLanguage": "ko"
+}
