@@ -264,6 +264,59 @@ final class FakeResetNotifier: ResetNotifier {
         check(tryState(store).attempts[credit.id]?.outcome == "alreadyRedeemed" && tryState(store).attempts[second.id] == nil,
               "fresh read alone is not confirmation; authoritative same-key response resolves pending work")
 
+        // A pending intent may never resolve through inventory alone. Its
+        // consumption hold is independent of alerts for other available credits.
+        for scenario in ["missing", "expired", "changed"] {
+            for autoUse in [false, true] {
+                now = expiry.addingTimeInterval(-600)
+                engine = try reset()
+                try store.updateSettings { $0.autoUse = autoUse }
+                let pendingExpiry = scenario == "expired" ? now.addingTimeInterval(-1) : expiry
+                let changed = ResetCredit(id: credit.id, expiresAt: scenario == "changed" ? expiry.addingTimeInterval(30) : pendingExpiry)
+                let available = ResetCredit(id: "synthetic-alert", expiresAt: now.addingTimeInterval(300))
+                service.fallback = snapshot(credits: scenario == "missing" ? [available] : [changed, available])
+                var uncertain = try store.state()
+                uncertain.attempts[credit.id] = Redemption(key: "synthetic-held", expiresAt: pendingExpiry,
+                                                          attemptedAt: now.addingTimeInterval(-181), outcome: "pending")
+                try store.write("state.json", uncertain)
+                try engine.tick(active: true)
+                check(service.calls.isEmpty && tryState(store).attempts[credit.id]?.key == "synthetic-held"
+                        && tryState(store).attempts[credit.id]?.outcome == "pending",
+                      "\(scenario) pending credit holds all consumption with autoUse=\(autoUse)")
+                check(tryState(store).reminders[available.id]?.contains(300) == true,
+                      "\(scenario) pending credit allows another available credit's due reminder with autoUse=\(autoUse)")
+                let delivered = notifier.delivered.count
+                engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+                try engine.tick(active: true)
+                check(service.calls.isEmpty && notifier.delivered.count == delivered,
+                      "\(scenario) pending hold and reminder deduplication survive restart with autoUse=\(autoUse)")
+            }
+        }
+
+        now = expiry.addingTimeInterval(-250)
+        engine = try reset()
+        let alertAfterRead = ResetCredit(id: "synthetic-fresh-alert", expiresAt: now.addingTimeInterval(300))
+        var disappearing = try store.state()
+        disappearing.attempts[credit.id] = Redemption(key: "synthetic-fresh-held", expiresAt: expiry,
+                                                     attemptedAt: now.addingTimeInterval(-181), outcome: "pending")
+        try store.write("state.json", disappearing)
+        service.snapshots = [snapshot(credits: [credit, alertAfterRead]), snapshot(credits: [alertAfterRead])]
+        service.fallback = snapshot(credits: [alertAfterRead])
+        try engine.tick(active: true)
+        check(service.calls.isEmpty && tryState(store).attempts[credit.id]?.key == "synthetic-fresh-held",
+              "pending disappearance during fresh read keeps the saved intent and blocks consumption")
+        check(tryState(store).reminders[alertAfterRead.id]?.contains(300) == true,
+              "pending disappearance during fresh read still delivers another credit's due reminder")
+        let deliveredAfterRead = notifier.delivered.count
+        engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+        try engine.tick(active: true)
+        check(service.calls.isEmpty && notifier.delivered.count == deliveredAfterRead && tryState(store).phase == "needsReview",
+              "fresh-read disappearance preserves hold and reminder deduplication across restart")
+        try store.updateSettings { $0.reminders = false }
+        try engine.tick(active: true)
+        check(service.calls.isEmpty && notifier.delivered.count == deliveredAfterRead,
+              "disabled reminder setting remains respected during the pending hold")
+
         let lease = try ResetLease(url: root.appendingPathComponent("worker.lock"))
         do { _ = try ResetLease(url: root.appendingPathComponent("worker.lock")); check(false, "second worker lock") }
         catch { check(true, "second worker cannot acquire the execution lease") }

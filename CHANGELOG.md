@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.3 — 2026-10-06
+
+- Preserve consumption holds for missing, expired or changed pending credits while processing expiry reminders for other available credits.
+- Apply the same reminder-only path to disappearance during the pre-consume fresh read; never infer consumption success from inventory changes.
+- Test auto-use on/off, due alerts, reminder deduplication across restart and disabled reminders during pending holds.
+
 ## 1.1.2 — 2026-10-06
 
 - Block new redemptions of other credits while any prior result remains unconfirmed, including the retry delay and process restart.

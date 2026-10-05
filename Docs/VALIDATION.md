@@ -1,10 +1,12 @@
 # Validation scope
 
-The reset runtime has 50 reset-status/time-zone checks and 47 engine checks, plus guarded mock stdio read and consume contract tests. All fixtures use fictitious data. The packaging check verifies an invalid-architecture build preserves the last good app. 20 compact-menu checks cover normal/unknown/stale counts, Seoul expiry, imminent expiry, unconfirmed outcomes, worker/notification failure and concise login/CLI warnings. The portable migration tests use temporary paths and synthetic keys, never launchd or the real CLI.
+The reset runtime has 50 reset-status/time-zone checks and 69 engine checks, plus guarded mock stdio read and consume contract tests. All fixtures use fictitious data. The packaging check verifies an invalid-architecture build preserves the last good app. 20 compact-menu checks cover normal/unknown/stale counts, Seoul expiry, imminent expiry, unconfirmed outcomes, worker/notification failure and concise login/CLI warnings. The portable migration tests use temporary paths and synthetic keys, never launchd or the real CLI.
 
 Coverage includes standby, exact 10% thresholds, weekly-only eligibility, another bucket, changed credit/eligibility, missing/stale data, noCredit/nothingToReset/alreadyRedeemed, persisted intent failures, restart with the same key, exclusive process lease, reminders and denied notification permission. Asia/Seoul display is checked across a UTC date boundary.
 
 Version 1.1.2 adds multi-credit pending recovery: retry delays and restarts cannot consume another credit, a fresh read with absent/changed credits or ineligible usage cannot discard an unknown intent, and multiple pending intents each retain their stored key. A fake server simulates an actual reset followed by response timeout and confirms the original result on same-key replay without performing another reset. A separate test process verifies that the held worker lease excludes another process. Fresh inventory alone is not treated as successful redemption.
+
+Version 1.1.3 verifies that missing, expired or changed pending credits still hold all consumption while another available credit receives its due reminder, both with auto-use enabled and disabled. The same-cycle fresh-read disappearance path uses the fresh available inventory for reminders. Reminder deduplication survives restart; turning reminders off does not authorize consumption or send an alert.
 
 A local v1.1.0 deployment followed by the v1.1.1 menu update verified the installed version, a single native worker with no legacy consumer, actual menu construction, current settings and macOS notification authorization. Personal usage values and logs are not published here. No real credit was consumed for verification.
 

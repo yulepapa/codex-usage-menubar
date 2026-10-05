@@ -164,7 +164,8 @@ final class ResetEngine {
                 $0.id == entry.key && $0.expiresAt == entry.value.expiresAt
             })
         }) {
-            state.phase = "needsReview"; state.lastError = "resultUnknown"; try save(state); return
+            state.phase = "needsReview"; state.lastError = "resultUnknown"
+            try remindAvailableInventory(settings: settings, state: &state); return
         }
         for credit in state.inventory {
             let remaining = credit.expiresAt.timeIntervalSince(clock())
@@ -186,7 +187,7 @@ final class ResetEngine {
                     state.inventory = fresh.resetCredits; state.availableCount = fresh.credits.availableCount
                     if unresolved[credit.id] != nil {
                         state.phase = "needsReview"; state.lastError = "resultUnknown"
-                        try save(state); return
+                        try remindAvailableInventory(settings: settings, state: &state); return
                     }
                     continue
                 }
@@ -234,6 +235,18 @@ final class ResetEngine {
             try remind(credit, settings: settings, state: &state)
         }
         if state.phase == "checking" { state.phase = settings.autoUse ? "monitoring" : "autoUseOff" }
+        try save(state)
+    }
+
+    // Holding uncertain consumption must not suppress reminders for available
+    // credits. This path never performs a consume or changes a saved intent.
+    private func remindAvailableInventory(settings: ResetSettings, state: inout ResetEngineState) throws {
+        for credit in state.inventory {
+            if let attempt = state.attempts[credit.id], ["reset", "alreadyRedeemed", "noCredit"].contains(attempt.outcome) {
+                notifier.clear(credit: credit); continue
+            }
+            try remind(credit, settings: settings, state: &state)
+        }
         try save(state)
     }
 
