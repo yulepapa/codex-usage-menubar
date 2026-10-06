@@ -52,7 +52,7 @@ struct ResetMenuPresentation {
     private static func hasDeferredNoOp(state: ResetEngineState, now: Date) -> Bool {
         // Worker phases are transient and may be saved before a slow read.
         // Keep the authoritative result visible from its durable ledger entry.
-        guard state.phase != "waitingForCredit", (state.availableCount ?? 0) > 0 else { return false }
+        guard (state.availableCount ?? 0) > 0 else { return false }
         return state.inventory.contains { credit in
             guard let attempt = state.attempts[credit.id], attempt.outcome == "nothingToReset",
                   attempt.expiresAt == credit.expiresAt, credit.expiresAt > now else { return false }

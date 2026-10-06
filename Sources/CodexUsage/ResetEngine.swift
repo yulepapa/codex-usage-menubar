@@ -238,7 +238,14 @@ final class ResetEngine {
                         try save(state)
                         return // At most one logical redemption in a cycle.
                     }
-                } else { state.phase = "waitingForCredit" }
+                } else {
+                    // A successful fresh read supersedes the first snapshot even
+                    // when it invalidates eligibility. Keep that knowledge durable.
+                    state.inventory = fresh.resetCredits
+                    state.availableCount = fresh.credits.availableCount
+                    state.checkedAt = clock()
+                    state.phase = "waitingForCredit"
+                }
             }
             try remind(credit, settings: settings, state: &state)
         }

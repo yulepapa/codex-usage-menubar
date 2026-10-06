@@ -444,9 +444,33 @@ final class FakeResetNotifier: ResetNotifier {
             let invalidFresh = UsagePayload(bucketLabel: nil, windows: [],
                 credits: CreditInfo(availableCount: freshCount, earliestExpiresAt: nil), resetCredits: [freshCredit])
             service.snapshots = [snapshot(), invalidFresh]
+            let invalidatingRead = service.readCount + 2
+            service.beforeRead = {
+                if service.readCount == invalidatingRead { now = now.addingTimeInterval(1) }
+            }
             try engine.tick(active: true)
+            service.beforeRead = nil
+            let lastFreshReadTime = now
+            func retainsFreshSnapshot() -> Bool {
+                let saved = tryState(store)
+                return saved.availableCount == freshCount && saved.checkedAt == lastFreshReadTime
+                    && saved.inventory.count == 1 && saved.inventory.first?.id == freshCredit.id
+                    && saved.inventory.first?.expiresAt == freshCredit.expiresAt
+                    && saved.attempts[credit.id]?.outcome == "nothingToReset"
+                    && saved.attempts[credit.id]?.key == service.calls.first?.1
+            }
             check(tryState(store).phase == "waitingForCredit" && !noOpIsVisible() && service.calls.count == 1,
                   "fresh \(scenario) invalidation clears the earlier snapshot's no-op warning")
+            check(retainsFreshSnapshot(), "fresh \(scenario) count, inventory and read time replace the first snapshot without changing the ledger")
+            now = now.addingTimeInterval(1); service.failRead = true
+            try engine.tick(active: true)
+            check(tryState(store).phase == "queryFailed" && !noOpIsVisible() && retainsFreshSnapshot() && service.calls.count == 1,
+                  "next tick read failure cannot revive the snapshot invalidated by fresh \(scenario)")
+            now = now.addingTimeInterval(1)
+            engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+            try engine.tick(active: true)
+            check(tryState(store).phase == "queryFailed" && !noOpIsVisible() && retainsFreshSnapshot() && service.calls.count == 1,
+                  "restart read failure retains fresh \(scenario) knowledge and keeps the superseded no-op hidden")
         }
 
         let lease = try ResetLease(url: root.appendingPathComponent("worker.lock"))
