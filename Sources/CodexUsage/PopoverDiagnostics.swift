@@ -41,6 +41,7 @@ enum PopoverDiagnostics {
                             styleMask: [.borderless], backing: .buffered, defer: false)
         host.contentViewController = controller
         func save(_ name: String) throws {
+            host.makeFirstResponder(nil)
             view.layoutSubtreeIfNeeded()
             try view.png().write(to: directory.appendingPathComponent(name + ".png"))
         }
@@ -64,6 +65,101 @@ enum PopoverDiagnostics {
         state.attempts = [:]; settings.autoUse = true
         state.inventory[0] = ResetCredit(id: "synthetic-credit", expiresAt: now.addingTimeInterval(1920))
         view.model = make([five, week])
+        // Coordinate-targeted card interactions use this view's actual hit testing.
+        let baselineState = state
+        var forbiddenCardCallbacks = 0
+        view.onAutoUse = { forbiddenCardCallbacks += 1 }
+        view.onReminders = { forbiddenCardCallbacks += 1 }
+        view.onRefresh = { forbiddenCardCallbacks += 1 }
+        state.inventory = []; state.availableCount = 0
+        view.model = make([five, week]); try save("stack-zero")
+        try check(view.visibleCredits.isEmpty && view.backCardButtons.allSatisfy(\.isHidden) && view.nextCardButton.isHidden, "zero cards have no stack or navigation")
+        let first = ResetCredit(id: "synthetic-first", expiresAt: now.addingTimeInterval(720))
+        let second = ResetCredit(id: "synthetic-second", expiresAt: now.addingTimeInterval(1920))
+        let third = ResetCredit(id: "synthetic-third", expiresAt: now.addingTimeInterval(3600))
+        state.inventory = [first]; state.availableCount = 1
+        view.model = make([five, week]); try save("stack-one")
+        try check(view.visibleCredits.count == 1 && view.nextCardButton.isHidden, "one card has no fake backing or navigation")
+        state.inventory = [third, first, second]; state.availableCount = 3
+        view.model = make([five, week]); view.setExpanded(false, animated: false)
+        try save("stack-three-default")
+        func clickAtCenter(_ button: PopoverButton) throws {
+            let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: view.superview)
+            try check(view.hitTest(point) === button, "card coordinate resolves to intended button")
+            (view.hitTest(point) as? NSButton)?.performClick(nil)
+        }
+        func checkCardEdges(_ button: PopoverButton) throws {
+            for x in [CGFloat(1), button.bounds.midX, button.bounds.maxX - 1] {
+                for y in [CGFloat(1), button.bounds.midY, button.bounds.maxY - 1] {
+                    let point = button.convert(NSPoint(x: x, y: y), to: view.superview)
+                    try check(view.hitTest(point) === button, "exposed card strip edge hits its own button")
+                }
+            }
+        }
+        for button in view.backCardButtons { try checkCardEdges(button) }
+        try checkCardEdges(view.ticketButton)
+        let back = view.backCardButtons[0]
+        let frameBeforeHover = back.frame
+        let point = back.convert(NSPoint(x: back.bounds.midX, y: back.bounds.midY), to: nil)
+        let hoverEvent = NSEvent.enterExitEvent(with: .mouseEntered, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: host.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+        back.mouseEntered(with: hoverEvent)
+        try save("stack-three-hover")
+        for button in view.backCardButtons { try checkCardEdges(button) }
+        try checkCardEdges(view.ticketButton)
+        try check(view.hoverLift(for: second.id) == 3 && view.selectedCredit?.id == first.id && back.frame == frameBeforeHover,
+                  "reduced-motion hover lifts same card instantly without changing selection or hit frame")
+        view.backCardButtons[1].mouseEntered(with: hoverEvent)
+        back.mouseExited(with: hoverEvent)
+        try check(view.hoveredCardID == third.id, "out-of-order old exit cannot clear new card hover")
+        view.backCardButtons[1].mouseExited(with: hoverEvent)
+        try clickAtCenter(back)
+        try check(view.selectedCredit?.id == second.id && view.expanded, "back tab selects its real ID and immediately opens details")
+        try save("stack-three-selected")
+        try check(view.model.status == .ready && view.model.expiresAt == first.expiresAt, "selected later expiry cannot change overall policy or status")
+        try clickAtCenter(view.ticketButton)
+        try check(view.selectedCredit?.id == first.id && view.selection.selectedID == nil, "selected card click returns earliest default")
+        try clickAtCenter(view.backCardButtons[1])
+        try check(view.selectedCredit?.id == third.id, "far tab targets third card, not overlapping neighbor")
+        view.backCardButtons[0].mouseEntered(with: hoverEvent)
+        // Refresh keeps explicit identity and updates that card's expiry.
+        state.inventory = [ResetCredit(id: first.id, expiresAt: now.addingTimeInterval(2400)), ResetCredit(id: third.id, expiresAt: now.addingTimeInterval(600)), second]
+        view.model = make([five, week])
+        try check(view.selectedCredit?.id == third.id && view.selectedCredit?.expiresAt == now.addingTimeInterval(600), "refresh reconciles changed expiry by identity")
+        try check(view.hoveredCardID == nil, "refresh remapping clears hover rather than lifting another slot")
+        state.inventory = [first, second]; state.availableCount = 2; view.model = make([five, week])
+        try check(view.selectedCredit?.id == first.id && view.selection.selectedID == nil, "removed selection returns earliest")
+        state.inventory = [ResetCredit(id: "synthetic-tie-b", expiresAt: second.expiresAt), ResetCredit(id: "synthetic-tie-a", expiresAt: second.expiresAt)]
+        view.model = make([five, week]); try save("stack-tied")
+        try check(view.selectedCredit?.id == "synthetic-tie-a", "tied expiry orders by stable ID")
+        state.inventory = (0..<12).map { ResetCredit(id: "synthetic-many-\($0)", expiresAt: now.addingTimeInterval(Double(900 + $0 * 120))) }
+        state.availableCount = 12; view.model = make([five, week])
+        for ordinal in 0..<12 {
+            try check(view.selection.index(in: view.model.individualCredits) == ordinal && view.visibleCredits.count <= 3, "all many-card positions selectable within bounded stack")
+            if ordinal < 11 { try clickAtCenter(view.nextCardButton) }
+        }
+        try save("stack-many-last")
+        try check(!view.nextCardButton.isEnabled && view.previousCardButton.isEnabled, "many-card navigation has honest endpoints")
+        view.moveCard(-5); try save("stack-many-selected")
+        state.availableCount = 2; view.model = make([five, week]); try save("stack-count-mismatch")
+        try check(view.model.individualCredits.count == 12 && !view.model.warnings.isEmpty, "mismatched total does not hide observed cards")
+        state.checkedAt = now.addingTimeInterval(-181); view.model = make([five, week]); try save("stack-stale")
+        try check(view.visibleCredits.isEmpty, "stale inventory removes selectable cards")
+        state.checkedAt = now; state.inventory = [first, second, third]; state.availableCount = 3
+        state.attempts["synthetic-pending"] = Redemption(key: "synthetic", expiresAt: first.expiresAt, attemptedAt: now, outcome: "pending")
+        view.model = make([five, week]); view.selectCard(third.id); try save("stack-pending-selected")
+        try check(view.model.status == .pending, "card selection cannot conceal pending outcome")
+        try check(forbiddenCardCallbacks == 0, "all card actions call no settings, refresh or consumption callback")
+        state.attempts = [:]; view.model = make([five, week]); view.selectCard(third.id)
+        view.forceReducedMotion = false
+        let animatedCard = view.visibleCredits[1]
+        view.hoverCard(animatedCard.id)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.24))
+        try check(view.hoverLift(for: animatedCard.id) == 3, "normal hover animation reaches lift")
+        view.hoverCard(nil); RunLoop.current.run(until: Date().addingTimeInterval(0.24))
+        try check(view.hoverLift(for: animatedCard.id) == 0, "normal hover animation returns")
+        view.forceReducedMotion = true
+        state = baselineState; view.model = make([five, week])
         var autoCalls = 0, reminderCalls = 0, refreshCalls = 0, closeCalls = 0
         view.onAutoUse = { autoCalls += 1; settings.autoUse.toggle(); view.model = make([five, week]) }
         view.onReminders = { reminderCalls += 1; settings.reminders.toggle(); view.model = make([five, week]) }
@@ -129,6 +225,26 @@ enum PopoverDiagnostics {
             try check(controller.view.window?.makeFirstResponder(view.ticketButton) == true, "ticket accepts keyboard focus")
             controller.view.window?.selectNextKeyView(view.ticketButton)
             try check(controller.view.window?.firstResponder === view.autoButton, "Tab reaches auto-use control")
+            if cycles == 0 {
+                state.inventory = [first, second, third]; state.availableCount = 3
+                view.model = make([five, week])
+                func key(_ code: UInt16, _ chars: String) -> NSEvent {
+                    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                        windowNumber: controller.view.window!.windowNumber, context: nil, characters: chars,
+                        charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+                }
+                view.ticketButton.keyDown(with: key(124, "\u{F703}"))
+                try check(view.selectedCredit?.id == second.id, "Right arrow selects next actual credit")
+                view.ticketButton.keyDown(with: key(36, "\r"))
+                try check(view.selectedCredit?.id == first.id, "Enter on selected returns earliest")
+                view.ticketButton.keyDown(with: key(124, "\u{F703}"))
+                view.ticketButton.keyDown(with: key(49, " "))
+                try check(view.selectedCredit?.id == first.id, "Space on selected returns earliest")
+                controller.view.window?.makeFirstResponder(view.ticketButton)
+                controller.view.window?.selectNextKeyView(view.ticketButton)
+                try check(controller.view.window?.firstResponder === view.backCardButtons[0], "Tab reaches exposed card tab")
+                state = baselineState; view.model = make([week])
+            }
             view.refreshButton.performClick(nil)
             try check(view.model.windows.count == 1, "refresh while open preserves new model")
             controller.cancelOperation(nil); pump()
@@ -140,7 +256,7 @@ enum PopoverDiagnostics {
             "version": appVersion, "mode": "synthetic-only", "sizePoints": [660, 414],
             "renderPixels": [1320, 828], "screenCapture": false,
             "liveAccountRequests": 0, "settingsWrites": 0, "notificationPermissionRequests": 0,
-            "programmaticPopoverCycles": cycles, "closeActions": closeCalls, "keyboardTabChecked": true,
+            "programmaticPopoverCycles": cycles, "closeActions": closeCalls, "keyboardTabChecked": true, "creditStackChecks": "passed", "cardActionSettingCallbacks": forbiddenCardCallbacks,
             "mockAutoUseActions": autoCalls, "mockReminderActions": reminderCalls,
             "mockRefreshActions": refreshCalls, "reducedMotionChecked": true, "normalAnimationExercised": normalAnimationExercised,
             "mockSaveFailureRestored": true,

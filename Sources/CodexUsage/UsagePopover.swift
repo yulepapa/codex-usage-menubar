@@ -28,6 +28,25 @@ private enum Palette {
 /// Real NSButtons provide key-view traversal and accessibility actions over vector artwork.
 final class PopoverButton: NSButton {
     var onPress: (() -> Void)?
+    var onHover: ((Bool) -> Void)?
+    var onArrow: ((Int) -> Void)?
+    private var hoverTracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area); hoverTracking = area
+    }
+    override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    override func mouseExited(with event: NSEvent) { onHover?(false) }
+    override func keyDown(with event: NSEvent) {
+        if let onArrow {
+            if [123, 126].contains(event.keyCode) { onArrow(-1); return }
+            if [124, 125].contains(event.keyCode) { onArrow(1); return }
+            if [36, 76, 49].contains(event.keyCode) { performClick(nil); return }
+        }
+        super.keyDown(with: event)
+    }
     init(label: String, frame: NSRect) {
         super.init(frame: frame)
         title = label; isBordered = false; bezelStyle = .regularSquare
@@ -51,12 +70,26 @@ final class PopoverButton: NSButton {
 
 final class UsagePopoverView: NSView {
     static let size = NSSize(width: 660, height: 414)
-    var model: PopoverPresentation { didSet { updateControls() } }
+    var model: PopoverPresentation {
+        didSet {
+            let oldMapping = selection.visible(in: oldValue.individualCredits).map(\.id)
+            selection.reconcile(model.individualCredits)
+            if oldMapping != visibleCredits.map(\.id) { hoverCard(nil) }
+            updateControls()
+        }
+    }
     var onClose: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onAutoUse: (() -> Void)?
     var onReminders: (() -> Void)?
     var onQuit: (() -> Void)?
+    private(set) var selection = CreditStackSelection()
+    private(set) var hoveredCardID: String?
+    private var hoverLevels: [String: CGFloat] = [:]
+    private var hoverStarts: [String: CGFloat] = [:]
+    private var hoverBegan = Date.distantPast
+    var selectedCredit: ResetCredit? { selection.front(in: model.individualCredits) }
+    var visibleCredits: [ResetCredit] { selection.visible(in: model.individualCredits) }
     private(set) var expanded = false
     private(set) var showingDetails = false
     private(set) var ticketProgress: CGFloat = 0
@@ -68,6 +101,12 @@ final class UsagePopoverView: NSView {
     private var ticketBegan = Date.distantPast, switchBegan = Date.distantPast
     let closeButton = PopoverButton(label: localized("Close", "닫기"), frame: NSRect(x: 605, y: 16, width: 36, height: 34))
     let ticketButton = PopoverButton(label: localized("Expand credit expiry", "리셋권 만료 상세 펼치기"), frame: NSRect(x: 410, y: 97, width: 224, height: 91))
+    let backCardButtons = [
+        PopoverButton(label: localized("Next credit", "다른 리셋권"), frame: NSRect(x: 418, y: 91, width: 208, height: 14)),
+        PopoverButton(label: localized("Next credit", "다른 리셋권"), frame: NSRect(x: 426, y: 77, width: 192, height: 14))
+    ]
+    let previousCardButton = PopoverButton(label: localized("Previous credit", "이전 리셋권"), frame: NSRect(x: 410, y: 246, width: 28, height: 20))
+    let nextCardButton = PopoverButton(label: localized("Next credit", "다음 리셋권"), frame: NSRect(x: 606, y: 246, width: 28, height: 20))
     let autoButton = PopoverButton(label: localized("Automatic credit use", "리셋권 자동 사용"), frame: NSRect(x: 545, y: 268, width: 89, height: 42))
     let statusButton = PopoverButton(label: localized("Reset status details", "리셋 처리 상태 상세"), frame: NSRect(x: 410, y: 325, width: 224, height: 29))
     let refreshButton = PopoverButton(label: localized("Refresh", "새로고침"), frame: NSRect(x: 24, y: 384, width: 88, height: 25))
@@ -86,14 +125,31 @@ final class UsagePopoverView: NSView {
         renderedAutoUse = model.autoUse
         setAccessibilityElement(false)
         closeButton.onPress = { [weak self] in self?.onClose?() }
-        ticketButton.onPress = { [weak self] in self?.setExpanded(!(self?.expanded ?? false)) }
+        ticketButton.onPress = { [weak self] in self?.clickFrontCard() }
+        ticketButton.onHover = { [weak self] entered in
+            guard let self else { return }; self.trackCardHover(self.selectedCredit?.id, entered: entered)
+        }
+        ticketButton.onArrow = { [weak self] delta in self?.moveCard(delta) }
+        previousCardButton.onPress = { [weak self] in self?.moveCard(-1) }
+        nextCardButton.onPress = { [weak self] in self?.moveCard(1) }
+        for (index, button) in backCardButtons.enumerated() {
+            button.onPress = { [weak self] in
+                guard let self, self.visibleCredits.indices.contains(index + 1) else { return }
+                self.selectCard(self.visibleCredits[index + 1].id)
+            }
+            button.onHover = { [weak self] entered in
+                guard let self, self.visibleCredits.indices.contains(index + 1) else { return }
+                self.trackCardHover(self.visibleCredits[index + 1].id, entered: entered)
+            }
+            button.onArrow = { [weak self] delta in self?.moveCard(delta) }
+        }
         autoButton.onPress = { [weak self] in self?.onAutoUse?(); self?.updateControls() }
         statusButton.onPress = { [weak self] in self?.setDetails(true) }
         refreshButton.onPress = { [weak self] in self?.onRefresh?() }
         detailsButton.onPress = { [weak self] in self?.setDetails(!(self?.showingDetails ?? false)) }
         quitButton.onPress = { [weak self] in self?.onQuit?() }
         autoButton.setButtonType(.switch)
-        for button in [ticketButton, autoButton, statusButton, refreshButton, detailsButton, quitButton, closeButton] { addSubview(button) }
+        for button in backCardButtons + [ticketButton, previousCardButton, nextCardButton, autoButton, statusButton, refreshButton, detailsButton, quitButton, closeButton] { addSubview(button) }
         scroll.frame = NSRect(x: 28, y: 142, width: 606, height: 218)
         scroll.hasVerticalScroller = true; scroll.drawsBackground = false; scroll.borderType = .noBorder
         detailText.isEditable = false; detailText.isSelectable = true; detailText.drawsBackground = false
@@ -129,6 +185,44 @@ final class UsagePopoverView: NSView {
     }
     @objc private func toggleReminder() { onReminders?(); updateControls() }
 
+    func selectCard(_ id: String) {
+        selection.select(id, in: model.individualCredits)
+        hoverCard(nil)
+        setExpanded(true)
+        window?.makeFirstResponder(ticketButton)
+    }
+    private func clickFrontCard() {
+        if let selectedCredit, selectedCredit.id != model.individualCredits.first?.id {
+            selectCard(selectedCredit.id)
+        } else {
+            if let selectedCredit { selection.select(selectedCredit.id, in: model.individualCredits) }
+            setExpanded(!expanded)
+        }
+    }
+    func moveCard(_ delta: Int) {
+        selection.move(delta, in: model.individualCredits)
+        hoverCard(nil); setExpanded(true)
+        window?.makeFirstResponder(ticketButton)
+    }
+    private func trackCardHover(_ id: String?, entered: Bool) {
+        if entered { hoverCard(id) }
+        else if hoveredCardID == id { hoverCard(nil) }
+    }
+    func hoverCard(_ id: String?) {
+        let valid = id.flatMap { candidate in visibleCredits.contains(where: { $0.id == candidate }) ? candidate : nil }
+        guard valid != hoveredCardID else { return }
+        hoveredCardID = valid; hoverStarts = hoverLevels; hoverBegan = Date()
+        if reducedMotion {
+            hoverLevels = valid.map { [$0: 1] } ?? [:]; needsDisplay = true
+        } else { startAnimation() }
+    }
+    func hoverLift(for id: String) -> CGFloat { 3 * (hoverLevels[id] ?? 0) }
+    private func cardLabel(_ credit: ResetCredit) -> String {
+        let position = (model.individualCredits.firstIndex(where: { $0.id == credit.id }) ?? 0) + 1
+        return localized("Credit \(position) of \(model.individualCredits.count)", "리셋권 \(position) / \(model.individualCredits.count)")
+            + " · " + PopoverPresentation.date(credit.expiresAt)
+    }
+
     func setExpanded(_ value: Bool, animated: Bool = true) {
         ticketStart = ticketProgress; ticketBegan = Date(); expanded = value
         if !animated || reducedMotion { ticketProgress = value ? 1 : 0 }
@@ -154,10 +248,20 @@ final class UsagePopoverView: NSView {
         let toggle = ease(Date().timeIntervalSince(switchBegan), 0.25)
         ticketProgress = ticketStart + ((expanded ? 1 : 0) - ticketStart) * ticket
         switchProgress = switchStart + ((model.autoUse ? 1 : 0) - switchStart) * toggle
+        let hover = ease(Date().timeIntervalSince(hoverBegan), 0.18)
+        for id in Set(hoverStarts.keys).union(hoveredCardID.map { [$0] } ?? []) {
+            let start = hoverStarts[id] ?? 0
+            hoverLevels[id] = start + ((hoveredCardID == id ? 1 : 0) - start) * hover
+        }
         needsDisplay = true
-        if ticket == 1 && toggle == 1 { animationTimer?.invalidate(); animationTimer = nil }
+        if ticket == 1 && toggle == 1 && hover == 1 {
+            hoverLevels = hoveredCardID.map { [$0: 1] } ?? [:]
+            animationTimer?.invalidate(); animationTimer = nil
+        }
     }
     private func updateControls() {
+        selection.reconcile(model.individualCredits)
+        if let hoveredCardID, !visibleCredits.contains(where: { $0.id == hoveredCardID }) { hoverCard(nil) }
         let target: CGFloat = model.autoUse ? 1 : 0
         if renderedAutoUse != model.autoUse {
             renderedAutoUse = model.autoUse
@@ -170,16 +274,32 @@ final class UsagePopoverView: NSView {
         autoButton.toolTip = model.canEdit ? localized("Change automatic credit use", "자동 사용 설정 변경") : localized("Worker/settings unavailable", "실행기·설정 확인 필요")
         reminderButton.state = model.reminders ? .on : .off; reminderButton.isEnabled = model.canEdit
         refreshButton.isEnabled = !model.refreshing
-        ticketButton.frame.size.height = expanded ? 147 : 91
-        ticketButton.setAccessibilityLabel(expanded ? localized("Collapse credit expiry", "리셋권 만료 상세 접기") : localized("Expand credit expiry", "리셋권 만료 상세 펼치기"))
+        ticketButton.frame = NSRect(x: 410, y: 105, width: 224, height: expanded ? 139 : 83)
+        let returnToDefault = selectedCredit != nil && selectedCredit?.id != model.individualCredits.first?.id
+        ticketButton.setAccessibilityLabel(returnToDefault ? localized("Return to earliest credit", "가장 먼저 만료되는 리셋권으로 돌아가기")
+            : expanded ? localized("Collapse credit expiry", "리셋권 만료 상세 접기") : localized("Expand credit expiry", "리셋권 만료 상세 펼치기"))
         ticketButton.setAccessibilityExpanded(expanded)
-        ticketButton.setAccessibilityValue((model.count.map { "\($0)" } ?? localized("Unknown", "확인 필요")) + " · " + (expanded ? model.expiryValue : localized("Collapsed", "접힘")))
+        ticketButton.setAccessibilityValue(selectedCredit.map(cardLabel) ?? localized("Individual credit information unavailable", "개별 리셋권 정보 미제공"))
+        ticketButton.toolTip = (selectedCredit.map(cardLabel) ?? localized("No individual credit details", "개별 리셋권 정보 없음"))
+            + localized(" · Selection only · Left/Right to browse", " · 정보 선택만 · 좌우 화살표로 이동")
+        for (index, button) in backCardButtons.enumerated() {
+            let card = visibleCredits.indices.contains(index + 1) ? visibleCredits[index + 1] : nil
+            button.isHidden = showingDetails || card == nil
+            button.setAccessibilityLabel(card.map(cardLabel) ?? "")
+            button.toolTip = card.map(cardLabel)
+        }
+        let ordinal = selection.index(in: model.individualCredits) ?? 0
+        previousCardButton.isHidden = showingDetails || model.individualCredits.count < 2
+        nextCardButton.isHidden = previousCardButton.isHidden
+        previousCardButton.isEnabled = ordinal > 0
+        nextCardButton.isEnabled = ordinal + 1 < model.individualCredits.count
         statusButton.setAccessibilityValue(model.status.title + (model.warnings.isEmpty ? "" : " · " + model.warnings.joined(separator: " · ")))
         statusButton.toolTip = model.readout.joined(separator: "\n")
         detailsButton.setAccessibilityLabel(showingDetails ? localized("Back to usage", "사용량으로 돌아가기") : localized("Details & settings", "상세 · 알림 설정"))
         scroll.isHidden = !showingDetails; reminderButton.isHidden = !showingDetails
         for button in [ticketButton, autoButton, statusButton] { button.isHidden = showingDetails }
-        let detail = model.readout.joined(separator: "\n\n")
+        let selectedDetail = selectedCredit.map { [localized("Selected for display: ", "표시 중인 권: ") + cardLabel($0)] } ?? []
+        let detail = (selectedDetail + model.readout).joined(separator: "\n\n")
         if detailText.string != detail { detailText.string = detail }
         detailText.layoutManager?.ensureLayout(for: detailText.textContainer!)
         let height = detailText.layoutManager?.usedRect(for: detailText.textContainer!).height ?? 218
@@ -190,12 +310,14 @@ final class UsagePopoverView: NSView {
             element.setAccessibilityParent(self)
             return element
         }
+        let cardControls = [ticketButton] + backCardButtons.filter { !$0.isHidden }
+            + [previousCardButton, nextCardButton].filter { !$0.isHidden }
         let visible: [Any] = showingDetails ? [closeButton, reminderButton, scroll, refreshButton, detailsButton, quitButton]
-            : readableElements + [closeButton, ticketButton, autoButton, statusButton, refreshButton, detailsButton, quitButton]
+            : readableElements + [closeButton] + cardControls + [autoButton, statusButton, refreshButton, detailsButton, quitButton]
         setAccessibilityChildren(visible)
         let keyViews: [NSView] = showingDetails
             ? [reminderButton, detailText, refreshButton, detailsButton, quitButton, closeButton]
-            : [ticketButton, autoButton, statusButton, refreshButton, detailsButton, quitButton, closeButton]
+            : cardControls + [autoButton, statusButton, refreshButton, detailsButton, quitButton, closeButton]
         for index in keyViews.indices { keyViews[index].nextKeyView = keyViews[(index + 1) % keyViews.count] }
         needsDisplay = true
     }
@@ -250,24 +372,60 @@ final class UsagePopoverView: NSView {
         }
     }
     private func drawTicket() {
-        let q = ticketProgress, known = model.count != nil
-        fill(NSRect(x: 418, y: 97, width: 208, height: 69), radius: 11, color: Palette.color(known ? 0xB6C194 : 0xD4D9CD))
+        let cards = visibleCredits
+        for index in (1..<max(1, cards.count)).reversed() {
+            let credit = cards[index], depth = CGFloat(index)
+            let x: CGFloat = 410 + depth * 8, y: CGFloat = 105 - depth * 14 - hoverLift(for: credit.id)
+            let color = Palette.color(index == 1 ? 0xB6C194 : 0xCFD8B0)
+            fill(NSRect(x: x, y: y, width: 224 - depth * 16, height: 83), radius: 9, color: color)
+            let ordinal = (model.individualCredits.firstIndex(where: { $0.id == credit.id }) ?? 0) + 1
+            text(localized("Credit \(ordinal)", "\(ordinal)번") + " · " + PopoverPresentation.date(credit.expiresAt),
+                 x: x + 12, y: y + 3, size: 8.5, color: Palette.ink, body: true, maxWidth: 195 - depth * 16)
+        }
+        NSGraphicsContext.saveGraphicsState()
+        let lift = selectedCredit.map { hoverLift(for: $0.id) } ?? 0
+        NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: -lift)
+        drawFrontTicket()
+        NSGraphicsContext.restoreGraphicsState()
+        if model.individualCredits.count > 1 {
+            let ordinal = (selection.index(in: model.individualCredits) ?? 0) + 1
+            text("‹", x: 424, y: 254, size: 20, color: previousCardButton.isEnabled ? Palette.ink : Palette.rule, middle: true, center: true)
+            text("›", x: 620, y: 254, size: 20, color: nextCardButton.isEnabled ? Palette.ink : Palette.rule, middle: true, center: true)
+            let count = model.count.map(String.init) ?? "?"
+            let caption = model.count == model.individualCredits.count
+                ? localized("\(ordinal) / \(model.individualCredits.count) · expiry order", "선택 \(ordinal) / \(model.individualCredits.count) · 만료순")
+                : localized("\(ordinal)/\(model.individualCredits.count) details · total \(count)", "정보 \(ordinal)/\(model.individualCredits.count) · 보유 \(count)")
+            text(caption, x: 522, y: 252, size: 10, color: Palette.muted, body: true, center: true, maxWidth: 166)
+        } else if model.count != model.individualCredits.count, model.count != 0 {
+            text(model.individualCredits.isEmpty ? localized("Individual details unavailable", "개별 리셋권 정보 미제공")
+                 : localized("1 credit detailed · total \(model.count.map(String.init) ?? "?")", "개별 정보 1장 · 보유 \(model.count.map(String.init) ?? "?")장"),
+                 x: 410, y: 252, size: 10, color: Palette.muted, body: true, maxWidth: 224)
+        }
+    }
+    private func drawFrontTicket() {
+        let q = ticketProgress, known = model.count.map { $0 > 0 } == true
         let color = known ? Palette.lime.blended(withFraction: q, of: Palette.apricot)! : Palette.color(0xE9EBDD)
         fill(NSRect(x: 410, y: 105, width: 224, height: 83 + 56 * q), radius: 12, color: color)
         dot(410, 151, 5.6, Palette.white); dot(634, 151, 5.6, Palette.white)
         text(localized("Credits", "리셋권"), x: 424, y: 118, size: 26, display: true, maxWidth: 120)
         text(model.count.map { localized("\($0)", "\($0)장") } ?? "—", x: 620, y: 134, size: 34, display: true, right: true, middle: true, maxWidth: 91)
         for x in stride(from: 421, to: 624, by: 9) { line((CGFloat(x), 152), (CGFloat(x + 4), 152), Palette.color(0x8A744C), 0.75) }
-        if q < 1 { text(known ? localized("View expiry", "만료 확인") : localized("Check details", "정보 확인"), x: 424, y: 164, size: 18, color: Palette.ink.withAlphaComponent(1 - q)) }
+        let ordinal = selection.index(in: model.individualCredits).map { $0 + 1 }
+        if q < 1 {
+            let label = ordinal.map { localized("Credit \($0) · view expiry", "\($0)번 · 만료 확인") }
+                ?? (known ? localized("View earliest expiry", "첫 만료 확인") : localized("Check details", "정보 확인"))
+            text(label, x: 424, y: 164, size: 17, color: Palette.ink.withAlphaComponent(1 - q), maxWidth: 194)
+        }
         if q > 0 {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current?.cgContext.setAlpha(q)
-            text(localized("Expires in", "만료까지"), x: 424, y: 166, size: 17, maxWidth: 110)
-            text(model.expiryValue, x: 620, y: 183, size: model.expiresAt == nil ? 26 : 36, display: true, right: true, middle: true, maxWidth: 114)
-            if let date = model.expiresAt {
+            let expiry = selectedCredit?.expiresAt ?? model.expiresAt
+            text(ordinal.map { localized("#\($0) expires in", "\($0)번 만료까지") } ?? localized("Expires in", "만료까지"),
+                 x: 424, y: 166, size: ordinal == nil ? 17 : 13, maxWidth: 100)
+            text(model.expiryValue(for: expiry), x: 620, y: 183, size: expiry == nil ? 26 : 36, display: true, right: true, middle: true, maxWidth: 114)
+            if let date = expiry {
                 line((426, 208), (618, 208), Palette.ink, 2.6); dot(426, 208, 4.5, Palette.ink); dot(618, 208, 4.5, Palette.ink)
                 text(localized("Now", "지금"), x: 424, y: 218, size: 13, body: true)
-                // Include the date when expiry is not today in Seoul.
                 var calendar = Calendar(identifier: .gregorian); calendar.timeZone = PopoverPresentation.seoul
                 text(PopoverPresentation.date(date, timeOnly: calendar.isDate(date, inSameDayAs: model.now)), x: 620, y: 218, size: 13, body: true, right: true, maxWidth: 150)
             } else { text(localized("Latest information needed", "최신 정보 확인 필요"), x: 424, y: 217, size: 13, color: Palette.muted, body: true, maxWidth: 196) }
@@ -339,5 +497,6 @@ final class UsagePopoverController: NSViewController {
         view.window?.autorecalculatesKeyViewLoop = false
         view.window?.makeFirstResponder(canvas.ticketButton)
     }
+    override func viewWillDisappear() { super.viewWillDisappear(); canvas.hoverCard(nil) }
     override func cancelOperation(_ sender: Any?) { canvas.onClose?() }
 }

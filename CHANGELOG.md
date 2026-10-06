@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 — 2026-10-06
+
+- Show distinct, fresh reset credits as overlapping cards ordered by expiry, with stable ID tie-breaking and a small hover lift.
+- Select a card to reveal its expiry; click a selected non-default card again to return to the earliest credit. Default selection follows new earlier credits while explicit selections survive refresh by identity.
+- Limit the visible stack to three cards and provide previous/next navigation with position labels for every observed card. Keep unknown, stale, expired and count-only data explicit; disclose count/list mismatches.
+- Keep card actions display-only, with keyboard navigation and Reduce Motion support. Automatic use, saved settings, worker policy and durable result warnings remain independent of selection.
+- Add synthetic model, coordinate hit-testing, hover ordering, selection refresh, many-card, keyboard and callback-isolation checks.
+
 ## 1.2.0 — 2026-10-06
 
 - Replace the open menu with the approved 660 × 414 native AppKit popover, retaining the closed status-bar icon, default font and numeric format.

@@ -10,6 +10,8 @@ struct PopoverPresentation {
     var usageFailed = false
     var count: Int?
     var expiresAt: Date?
+    /// Only observed, distinct, fresh credits. Counts never synthesize cards.
+    var individualCredits: [ResetCredit] = []
     var autoUse = false
     var reminders = false
     var canEdit = false
@@ -59,6 +61,19 @@ struct PopoverPresentation {
             } : nil
         }
         if let value = count, value < 0 { count = nil; expiresAt = nil }
+        let inventoryFresh = native
+            ? state?.checkedAt.map { (0...180).contains(now.timeIntervalSince($0)) } == true && state?.lastError != "queryFailed"
+            : checkedAt.map { (0...180).contains(now.timeIntervalSince($0)) } == true && !usageFailed && legacyCredits != nil
+        if inventoryFresh {
+            var seen = Set<String>()
+            individualCredits = (native ? state?.inventory ?? [] : snapshot?.resetCredits ?? [])
+                .filter { !$0.id.isEmpty && $0.expiresAt.timeIntervalSince1970.isFinite && $0.expiresAt > now }
+                .sorted { $0.expiresAt == $1.expiresAt ? $0.id < $1.id : $0.expiresAt < $1.expiresAt }
+                .filter { seen.insert($0.id).inserted }
+        }
+        if !individualCredits.isEmpty, count != individualCredits.count {
+            warnings.insert(localized("Credit count differs from details · refresh needed", "보유 수·개별 정보 불일치 · 새로고침 필요"), at: 0)
+        }
         // The compact menu remains the authority for durable no-op warnings.
         // Never infer success from a falling count, an empty inventory, or phase alone.
         let noOp = localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")
@@ -84,8 +99,10 @@ struct PopoverPresentation {
         } else { status = .unknown }
     }
 
-    var expiryValue: String {
-        guard let date = expiresAt else { return localized("Unknown", "미제공") }
+    var expiryValue: String { expiryValue(for: expiresAt) }
+
+    func expiryValue(for date: Date?) -> String {
+        guard let date else { return localized("Unknown", "미제공") }
         let seconds = date.timeIntervalSince(now)
         if seconds <= 0 { return localized("Expired", "만료됨") }
         let minutes = max(1, Int(ceil(seconds / 60)))
@@ -126,5 +143,37 @@ struct PopoverPresentation {
         rows += warnings + details
         var seen = Set<String>()
         return rows.filter { seen.insert($0).inserted }
+    }
+}
+
+/// Ephemeral display selection, with no store, settings or service references.
+/// nil follows the earliest card; an explicit identity survives refresh/reordering.
+struct CreditStackSelection {
+    private(set) var selectedID: String?
+    static let pageSize = 3
+
+    mutating func reconcile(_ credits: [ResetCredit]) {
+        if let selectedID, !credits.contains(where: { $0.id == selectedID }) { self.selectedID = nil }
+    }
+    func front(in credits: [ResetCredit]) -> ResetCredit? {
+        credits.first(where: { $0.id == selectedID }) ?? credits.first
+    }
+    func index(in credits: [ResetCredit]) -> Int? {
+        guard let front = front(in: credits) else { return nil }
+        return credits.firstIndex(where: { $0.id == front.id })
+    }
+    func visible(in credits: [ResetCredit]) -> [ResetCredit] {
+        guard let index = index(in: credits) else { return [] }
+        let page = index / Self.pageSize * Self.pageSize
+        return [credits[index]] + credits[page..<min(credits.count, page + Self.pageSize)].filter { $0.id != credits[index].id }
+    }
+    mutating func select(_ id: String, in credits: [ResetCredit]) {
+        guard credits.contains(where: { $0.id == id }) else { return }
+        selectedID = front(in: credits)?.id == id ? nil : id
+    }
+    mutating func move(_ delta: Int, in credits: [ResetCredit]) {
+        guard let index = index(in: credits) else { return }
+        let next = max(0, min(credits.count - 1, index + delta))
+        if next != index { selectedID = credits[next].id }
     }
 }
