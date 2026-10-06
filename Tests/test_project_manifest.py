@@ -24,6 +24,7 @@ class ProjectManifestTests(unittest.TestCase):
         info = plistlib.loads((PROJECT / 'Resources/Info.plist').read_bytes())
         version = self.manifest['version']
         self.assertEqual(version, info['CFBundleShortVersionString'])
+        self.assertIn(f'let appVersion = "{version}"', (PROJECT / 'Sources/CodexUsage/UsageModels.swift').read_text())
         self.assertIn(f'현재 버전 **{version}**', (PROJECT / 'README.md').read_text())
         self.assertIn(f'## {version} —', (PROJECT / 'CHANGELOG.md').read_text())
 

@@ -29,8 +29,10 @@ final class FakeResetService: ResetService {
     var failReadAt: Int?
     var failConsume = false
     var beforeConsume: (() throws -> Void)?
+    var beforeRead: (() throws -> Void)?
     func read() throws -> UsagePayload {
         readCount += 1
+        try beforeRead?()
         if failRead || readCount == failReadAt { throw ResetStorageError.invalid }
         return snapshots.isEmpty ? fallback : snapshots.removeFirst()
     }
@@ -82,7 +84,7 @@ final class FakeResetNotifier: ResetNotifier {
             try store.write("ownership.json", ["active": true])
             try store.write("state.json", ResetEngineState())
             service.fallback = snapshot(); service.snapshots = []; service.calls = []; service.outcome = "reset"
-            service.failRead = false; service.failConsume = false; service.beforeConsume = nil
+            service.failRead = false; service.failConsume = false; service.beforeConsume = nil; service.beforeRead = nil
             service.readCount = 0; service.failReadAt = nil
             notifier.delivered = []; notifier.cleared = []; notifier.status = "authorized"
             return ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
@@ -375,7 +377,14 @@ final class FakeResetNotifier: ResetNotifier {
         for elapsed in [60, 120, 179] {
             now = noOpTime.addingTimeInterval(Double(elapsed))
             engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+            let freshRead = service.readCount + 2
+            service.beforeRead = {
+                guard service.readCount == freshRead else { return }
+                check(tryState(store).phase == "checking" && noOpIsVisible(),
+                      "persisted intermediate state retains the warning during the fresh read at \(elapsed)s")
+            }
             try engine.tick(active: true)
+            service.beforeRead = nil
             check(service.calls.count == 1 && tryState(store).attempts[credit.id]?.key == noOpKey,
                   "known service no-op preserves the attempt during retry delay at \(elapsed)s after restart")
             check(tryState(store).phase == "nothingToReset" && noOpIsVisible(),
@@ -387,6 +396,30 @@ final class FakeResetNotifier: ResetNotifier {
               "known no-op retries at exactly 180 seconds with a new logical attempt")
         check(tryState(store).phase == "reset" && !noOpIsVisible(),
               "authoritative success replaces the no-op warning")
+        now = expiry.addingTimeInterval(-1200)
+        engine = try reset(); service.outcome = "nothingToReset"
+        try engine.tick(active: true)
+        now = now.addingTimeInterval(60)
+        let interruptedFreshRead = service.readCount + 2
+        var interruptedState: ResetEngineState?
+        service.beforeRead = {
+            guard service.readCount == interruptedFreshRead else { return }
+            interruptedState = try store.state()
+            check(interruptedState?.phase == "checking" && noOpIsVisible(),
+                  "warning survives the intermediate save before a failed fresh read")
+            throw SimulatedResetError.responseTimeout
+        }
+        try engine.tick(active: true)
+        check(tryState(store).lastError == "queryFailed" && noOpIsVisible() && service.calls.count == 1,
+              "failed fresh read retains the known no-op warning without another consume")
+        // A terminated worker leaves the intermediate save, without executing catch.
+        try store.write("state.json", interruptedState!)
+        check(noOpIsVisible(), "interrupted worker's on-disk checking state retains its no-op warning")
+        service.beforeRead = nil; service.failRead = true
+        engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+        try engine.tick(active: true)
+        check(tryState(store).lastError == "queryFailed" && noOpIsVisible() && service.calls.count == 1,
+              "restart with another read failure preserves the durable no-op warning")
         for scenario in ["missing", "expired", "changed"] {
             now = expiry.addingTimeInterval(-120)
             engine = try reset(); service.outcome = "nothingToReset"
@@ -399,6 +432,21 @@ final class FakeResetNotifier: ResetNotifier {
             try engine.tick(active: true)
             check(service.calls.count == 1 && !noOpIsVisible(),
                   "\(scenario) credit does not revive a historical no-op warning")
+        }
+
+        for scenario in ["zeroCount", "unknownCount", "changedExpiry"] {
+            now = expiry.addingTimeInterval(-1200)
+            engine = try reset(); service.outcome = "nothingToReset"
+            try engine.tick(active: true)
+            now = now.addingTimeInterval(60)
+            let freshCredit = ResetCredit(id: credit.id, expiresAt: scenario == "changedExpiry" ? expiry.addingTimeInterval(30) : expiry)
+            let freshCount: Int? = scenario == "unknownCount" ? nil : (scenario == "zeroCount" ? 0 : 1)
+            let invalidFresh = UsagePayload(bucketLabel: nil, windows: [],
+                credits: CreditInfo(availableCount: freshCount, earliestExpiresAt: nil), resetCredits: [freshCredit])
+            service.snapshots = [snapshot(), invalidFresh]
+            try engine.tick(active: true)
+            check(tryState(store).phase == "waitingForCredit" && !noOpIsVisible() && service.calls.count == 1,
+                  "fresh \(scenario) invalidation clears the earlier snapshot's no-op warning")
         }
 
         let lease = try ResetLease(url: root.appendingPathComponent("worker.lock"))
