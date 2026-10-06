@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Install the menu and its bundled background worker in one command, with automatic use initially off and expiry reminders on.
+- Preserve existing choices and pending keys during updates; automatically hand off one recognized legacy user service without overlapping consumers.
+- Use a durable installation journal and private backups for failure recovery. Uninstall both services together while retaining settings and recovery records.
+- Verify installation, updates, removal, interrupted transactions and failures with isolated paths and a mock operating-system adapter.
+
 ## 1.1.3 — 2026-10-06
 
 - Preserve consumption holds for missing, expired or changed pending credits while processing expiry reminders for other available credits.

@@ -271,16 +271,22 @@ if __name__ == '__main__':
     parser.add_argument('--enable-auto-use', action='store_true', help='Explicitly enable normal conditional redemption after the handoff')
     args = parser.parse_args()
     try:
-        configure(args)
-        if args.plan:
-            state = json.loads((BASE / 'reset_credit_watcher_state.json').read_text())
-            initial_state(state)  # Reject unresolved legacy redemption before any changes.
-            print(json.dumps({'mode':'readOnlyPlan', 'app':str(APP), 'label':LABEL,
-                              'launchAgent':str(PLIST), 'backupDirectory':str(BACKUP_ROOT),
-                              'autoUseAfterApply':AUTO_USE, 'remindersAfterApply':True,
-                              'credentialsCopied':False}, ensure_ascii=False))
-        elif args.rollback: rollback(args.rollback.expanduser().resolve())
-        else: apply()
+        from contextlib import nullcontext
+        from installation import lease
+        # Historical recovery and unified installation must not mutate the same
+        # app/services concurrently. Read-only plans still create no lock file.
+        guard = nullcontext() if args.plan else lease(USER / 'Library/Application Support/CodexUsage/installation.lock')
+        with guard:
+            configure(args)
+            if args.plan:
+                state = json.loads((BASE / 'reset_credit_watcher_state.json').read_text())
+                initial_state(state)  # Reject unresolved legacy redemption before any changes.
+                print(json.dumps({'mode':'readOnlyPlan', 'app':str(APP), 'label':LABEL,
+                                  'launchAgent':str(PLIST), 'backupDirectory':str(BACKUP_ROOT),
+                                  'autoUseAfterApply':AUTO_USE, 'remindersAfterApply':True,
+                                  'credentialsCopied':False}, ensure_ascii=False))
+            elif args.rollback: rollback(args.rollback.expanduser().resolve())
+            else: apply()
     except Exception as e:
         print(json.dumps({'status':'blocked','reason':str(e)}, ensure_ascii=False))
         raise SystemExit(1)

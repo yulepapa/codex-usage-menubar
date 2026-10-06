@@ -11,7 +11,7 @@ for script in "$ROOT"/Scripts/*.sh; do
 done
 plutil -lint "$ROOT/Resources/Info.plist" >/dev/null
 
-if grep -RInE --exclude=test.sh --exclude-dir=.build --exclude-dir=.git --exclude-dir=__pycache__ \
+if grep -RInE --exclude=test.sh --exclude=.git --exclude-dir=.build --exclude-dir=.git --exclude-dir=__pycache__ \
     '/Users/|com\.yulepapa|\.aside/' "$ROOT"; then
     echo "Machine-specific value found in public source" >&2
     exit 1
@@ -105,9 +105,9 @@ if [ "${LIVE:-0}" = "1" ]; then
 fi
 
 if command -v python3 >/dev/null 2>&1; then
-    PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$ROOT/Tests" -p test_migration.py -v
+    PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$ROOT/Tests" -p 'test_*.py' -v
 else
-    echo "Python 3 is required to verify the optional migration helper" >&2
+    echo "Python 3 is required to verify installation and migration" >&2
     exit 1
 fi
 

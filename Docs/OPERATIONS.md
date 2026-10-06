@@ -1,60 +1,51 @@
-# Operations and recovery
+# 설치·운영·복구
 
-## Local files
+## 사용자 명령
 
-| Location | Purpose |
-| --- | --- |
-| `~/Library/Application Support/CodexUsage/codex-path` | Detected CLI path |
-| `~/Library/Application Support/CodexUsage/reset/settings.json` | `autoUse`, `reminders` |
-| `…/reset/state.json` | Expiry metadata, notification milestones, persisted consume recovery |
-| `…/reset/worker.json` | Selected label, executable and LaunchAgent path |
-| `…/reset/ownership.json`, `wake.json`, lock files | Ownership, wake/settings signal and exclusivity |
-| `…/reset/worker.stdout.log`, `worker.stderr.log` | Local operational output; do not upload |
-| `~/Library/LaunchAgents/<selected-label>.plist` | The single registered worker |
-| `~/Library/Application Support/CodexUsage/backups/<timestamp>/` | Portable helper's private recovery backup |
+- 설치와 업데이트: 프로젝트 폴더에서 `./Scripts/install.sh`
+- 제거: 같은 폴더에서 `./Scripts/uninstall.sh`
+- 자동 사용·알림 선택: 메뉴바에서 각각 설정
 
-The deployed instance may use a separately chosen app/plist or backup location. Preserve its actual paths. Do not move an active executable, configured support directory or recovery backup during source cleanup. Files are private local data; settings/ledger use owner-only permissions. The fictitious [settings example](../Examples/reset-settings.json) is not a copy of an account.
+메뉴와 감시기는 한 앱에 포함됩니다. 설치 도구가 두 사용자 로그인 서비스를 함께 관리하며, 사용자가 감시기를 따로 설치하거나 실행할 필요는 없습니다. 처음에는 자동 사용이 꺼져 있고 알림이 켜져 있습니다. 업데이트·재설치에서는 이전 선택을 보존합니다.
 
-## Explicit legacy handoff
+Python 3.9 이상은 설치 도구에 사용합니다. 실행 중인 앱·감시기는 Swift이며 기존 Codex CLI 로그인을 이용합니다. 비밀번호·토큰을 발급하거나 복사하지 않으며, 관리자 권한을 자동으로 얻지 않습니다.
 
-Build and test first. Select the **existing** legacy LaunchAgent and app rather than creating another consumer. Review the plan and obtain the operating-system/tool approval appropriate to the environment before applying.
+## 설치 순서와 보호 장치
 
-```sh
-python3 Scripts/reset-worker.py --plan \
-  --legacy-plist "$HOME/Library/LaunchAgents/example.reset-watcher.plist" \
-  --app "$HOME/Applications/CodexUsage.app" \
-  --enable-auto-use
+1. 설치 잠금으로 같은 사용자의 설치·제거가 동시에 실행되지 않게 합니다. 미완료 설치 기록이 있으면 먼저 복구합니다.
+2. 기존 메뉴·감시기 등록과 앱 위치, 사용 기록을 읽습니다. 중복 감시기나 알 수 없는 형식·미확정 이전 감시기 요청은 변경 전에 중단 사유가 됩니다.
+3. 새 앱을 빌드하고 서명을 확인합니다. 이 과정에서 실패하면 기존 앱과 서비스는 그대로 유지됩니다.
+4. 이전 앱·설정의 비공개 백업과 진행 기록을 만듭니다. 기존 메뉴·감시기를 멈춘 뒤 프로세스 종료와 작업 잠금을 확인합니다.
+5. 마지막 설정·사용 기록을 다시 읽습니다. 기존 앱의 기록은 그대로 보존하며, 지원하는 Python 감시기는 종료 뒤의 마지막 기록을 가져옵니다.
+6. 실행 소유권을 비활성으로 둔 채 앱과 두 로그인 서비스를 등록합니다. 메뉴·감시기의 시작 확인 중에는 리셋권 사용이나 알림을 실행하지 않습니다. 네트워크·계정 오류는 이후 메뉴 상태에서 확인할 수 있습니다.
+7. 설치를 확정한 뒤 소유권을 활성화합니다. 이전에 자동 사용이 켜져 있었다면 원래 조건에 따른 자동 사용을 재개하며, 새 설치는 꺼진 상태를 유지합니다.
 
-python3 Scripts/reset-worker.py --apply \
-  --legacy-plist "$HOME/Library/LaunchAgents/example.reset-watcher.plist" \
-  --app "$HOME/Applications/CodexUsage.app" \
-  --enable-auto-use
-```
+사용 기록을 디스크에 저장하는 설치 잠금과 감시기의 소비 잠금은 별개입니다. 감시기 잠금이 남아 있거나 이전 프로세스가 종료되지 않으면 새로운 소비기를 활성화하지 않습니다. 변경 도중 오류가 나면 앱·서비스 설정을 이전 상태로 복구하지만, 사용 기록은 오래된 백업으로 덮어쓰지 않습니다.
 
-`example.reset-watcher` is a fictitious label. Use the actual selected plist. The default legacy directory is `$CODEX_HOME/automations/codex` (or `~/.codex/automations/codex`); `--legacy-dir`, `--built-app` and `--codex-path` override explicit locations. The helper requires the selected legacy script to be exactly `reset_credit_watcher.py` and verifies the existing process. It does not support arbitrary automation formats or an implicit fresh consumer setup.
+## 기존 설치 인식
 
-`--plan` reads selected metadata and validates recovery outcomes only. `--apply` writes backups, support files, bundle and the selected LaunchAgent. Without `--enable-auto-use`, consumption stays off; reminders are enabled. macOS requests notification permission when the menu opens. Merely creating the ownership file cannot activate a worker while the selected plist still points to the old script.
+처음 설치할 위치는 `~/Applications/CodexUsage.app`입니다. 기존 native 감시기가 있으면 `reset/worker.json`의 등록과 실제 사용자 LaunchAgent를 대조해 앱 위치와 서비스 이름을 유지합니다. 메뉴와 감시기가 다른 앱을 가리키거나, 알려지지 않은 서비스가 같은 이름을 차지하면 중단합니다.
 
-After the old service is stopped, the helper rereads the final ledger so a consumption during staging is not lost. Unresolved legacy recovery blocks migration. The new worker must complete a read, be the only consumer, and the installed menu must launch; otherwise the helper restores the previous app/service. Keep all backups outside Git.
+지원하는 이전 감시기는 사용자 `Library/LaunchAgents`에 등록된 Python `reset_credit_watcher.py`입니다. 하나로 특정되고 실행 등록과 기록이 확인되면 같은 서비스 이름으로 인계합니다. 등록 없는 이전 감시기 파일이나 별도 실행 프로세스도 충돌로 취급합니다. 임의의 자동화 형식이나 여러 감시기 중 하나를 추측해 선택하지 않습니다.
 
-## Rollback
+앱의 자동 사용·알림 설정은 값 그대로 유지합니다. Python에서 처음 옮길 때 앱 설정이 없다면 자동 사용을 끈 상태로 인계합니다. 이전 계정 경로와 CLI 경로 등 알려진 환경 설정만 전달하며, 인증 환경 변수가 발견되면 복사하지 않고 중단합니다.
 
-Use the backup path reported by the **same** portable helper:
+## 제거와 재설치
 
-```sh
-python3 Scripts/reset-worker.py --rollback "$HOME/Library/Application Support/CodexUsage/backups/EXAMPLE_TIMESTAMP"
-```
+제거는 메뉴와 감시기를 멈추고 두 로그인 등록 및 앱을 제거합니다. `settings.json`, `state.json`, 백업, 실행 위치 기록은 보존합니다. 남겨 둔 작업 등록 정보는 소유권이 비활성이므로 소비기를 실행하지 않습니다.
 
-This stops the native service, merges any native recovery keys/results into the legacy ledger, restores the old app/plist and starts the legacy service. The original bespoke deployment helper has its own backup path and should be retained for that existing deployment; its backups are not interchangeable with this portable helper. Neither procedure copies credentials.
+동일한 설치 명령으로 다시 설치하면 이전 OFF/ON 선택과 미확정 요청의 키, 알림 기록을 유지합니다. `--purge` 옵션은 지원하지 않습니다. 제거가 중간에 실패하면 이전 앱과 서비스 설정을 복구합니다.
 
-A backup being present is not evidence that a live rollback has been exercised. Never erase `state.json` to retry an unknown consumption: it can discard the idempotency key.
+## 중단 후 복구
 
-## Common states
+설치 진행 파일은 `~/Library/Application Support/CodexUsage/install-transaction.json`, 백업은 같은 지원 폴더의 `install-backups/<식별자>/`입니다.
 
-- Unknown/stale or read failure: the worker cannot authorize consumption.
-- No credit: no pending successful use is inferred.
-- Unconfirmed result with absent/expired credit: hold for review, preserve the key.
-- Notification denied: allow CodexUsage in macOS System Settings → Notifications. Focus or banner settings may still suppress display.
-- Mac asleep/off: no execution; an expired credit cannot be recovered by a later local wake.
+설치가 확정되기 전에 중단됐다면 다음 명령에서 기존 앱·등록을 복원합니다. 확정 뒤 활성화만 남은 작업은 앞으로 완료하며, 이미 실행했을 수도 있는 감시기의 사용 기록을 되돌리지 않습니다. 제거 명령으로 복구를 시작하면 일시적으로 자동 사용을 활성화하지 않습니다.
 
-Usage-only uninstall is for installations without a configured reset worker. After reviewing and rolling back/stopping a worker, retain its ledger and backups until all recovery outcomes are known. Do not purge an active worker's support directory.
+복구할 권한이나 기록이 불충분하면 중단하고 백업과 진행 파일을 남깁니다. 이 경우 설치가 정상 완료됐다고 표시하지 않습니다. 파일을 임의로 지우거나 새로운 감시기를 따로 만들어 우회하지 마세요.
+
+과거 `reset-worker.py`의 백업은 [상세 문서의 이전 인계 도구 복구](ADVANCED.md#이전-인계-도구의-백업)를 따릅니다. 서로 다른 형식의 백업을 섞어 쓰지 않습니다.
+
+## 확인 범위
+
+격리된 사용자 디렉터리와 모의 launchd로 설치·반복 설치·업데이트·제거·재설치, 단계별 실패와 중단 복구를 검사합니다. 테스트는 실제 로그인 서비스, 설치본, 인증 정보나 리셋권을 변경하지 않습니다. 실제 시스템의 권한·로그인·재부팅과 운영 복구는 별도 검증 대상입니다. [검증 문서](VALIDATION.md)를 확인하세요.
