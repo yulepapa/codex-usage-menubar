@@ -47,8 +47,9 @@ final class FakeResetNotifier: ResetNotifier {
     var status = "authorized"
     var delivered: [Int] = []
     var cleared: [String] = []
+    var beforeClear: ((ResetCredit) -> Void)?
     func send(credit: ResetCredit, milestone: Int, now: Date) throws { delivered.append(milestone) }
-    func clear(credit: ResetCredit) { cleared.append(credit.id) }
+    func clear(credit: ResetCredit) { beforeClear?(credit); cleared.append(credit.id) }
 }
 
 @main enum ResetEngineTests {
@@ -86,7 +87,7 @@ final class FakeResetNotifier: ResetNotifier {
             service.fallback = snapshot(); service.snapshots = []; service.calls = []; service.outcome = "reset"
             service.failRead = false; service.failConsume = false; service.beforeConsume = nil; service.beforeRead = nil
             service.readCount = 0; service.failReadAt = nil
-            notifier.delivered = []; notifier.cleared = []; notifier.status = "authorized"
+            notifier.delivered = []; notifier.cleared = []; notifier.status = "authorized"; notifier.beforeClear = nil
             return ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
         }
         var engine = try reset()
@@ -472,6 +473,79 @@ final class FakeResetNotifier: ResetNotifier {
             check(tryState(store).phase == "queryFailed" && !noOpIsVisible() && retainsFreshSnapshot() && service.calls.count == 1,
                   "restart read failure retains fresh \(scenario) knowledge and keeps the superseded no-op hidden")
         }
+
+        for scenario in ["zeroCount", "unknownCount", "changedExpiry", "missingID"] {
+            now = expiry.addingTimeInterval(-1200)
+            engine = try reset(); service.outcome = "nothingToReset"
+            try engine.tick(active: true)
+            let originalKey = service.calls.first!.1
+            now = now.addingTimeInterval(60)
+            let freshCredit = ResetCredit(id: credit.id, expiresAt: scenario == "changedExpiry" ? expiry.addingTimeInterval(30) : expiry)
+            let freshInventory = scenario == "missingID" ? [second] : [freshCredit, second]
+            let freshCount: Int? = scenario == "unknownCount" ? nil : (scenario == "zeroCount" ? 0 : freshInventory.count)
+            let invalidFresh = UsagePayload(bucketLabel: nil, windows: [],
+                credits: CreditInfo(availableCount: freshCount, earliestExpiresAt: nil), resetCredits: freshInventory)
+            service.snapshots = [snapshot(credits: [credit, second]), invalidFresh]
+            let freshRead = service.readCount + 2
+            var freshReadTime = now
+            var interrupted: ResetEngineState?
+            var observedClear = false
+            func durableInvalidation() -> Bool {
+                let saved = tryState(store)
+                return saved.availableCount == freshCount && saved.checkedAt == freshReadTime
+                    && saved.inventory.map(\.id) == freshInventory.map(\.id)
+                    && saved.inventory.map(\.expiresAt) == freshInventory.map(\.expiresAt)
+                    && saved.attempts[credit.id]?.key == originalKey
+                    && saved.attempts[credit.id]?.outcome == "nothingToReset"
+                    && saved.attempts[second.id] == nil && !noOpIsVisible()
+            }
+            notifier.beforeClear = { cleared in
+                guard scenario == "missingID", cleared.id == credit.id else { return }
+                observedClear = true
+                check(durableInvalidation(), "fresh missing-ID snapshot is on disk before clearing its notification")
+            }
+            service.beforeRead = {
+                if service.readCount == freshRead {
+                    now = now.addingTimeInterval(1); freshReadTime = now
+                } else if service.readCount == freshRead + 1 {
+                    check(durableInvalidation(), "fresh \(scenario) snapshot is on disk before the next credit's read returns")
+                    interrupted = try store.state()
+                    throw SimulatedResetError.responseTimeout
+                }
+            }
+            try engine.tick(active: true)
+            check(interrupted != nil && service.calls.count == 1 && durableInvalidation(),
+                  "two-credit \(scenario) invalidation remains durable after the later read fails")
+            if scenario == "missingID" { check(observedClear, "missing-ID regression observes the notification callback") }
+            // Restore exactly the disk state visible before the later read's catch,
+            // as if the worker had terminated while that read was blocked.
+            try store.write("state.json", interrupted!)
+            service.beforeRead = nil; notifier.beforeClear = nil; service.failRead = true
+            engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+            try engine.tick(active: true)
+            check(durableInvalidation() && service.calls.count == 1 && tryState(store).phase == "queryFailed",
+                  "restart after a blocked second-credit read preserves fresh \(scenario) knowledge")
+        }
+
+        now = expiry.addingTimeInterval(-1200)
+        engine = try reset(); service.outcome = "nothingToReset"
+        try engine.tick(active: true)
+        now = now.addingTimeInterval(60)
+        try store.updateSettings { $0.autoUse = false }
+        service.fallback = snapshot(credits: [second])
+        var observedInitialClear = false
+        notifier.beforeClear = { cleared in
+            guard cleared.id == credit.id, !observedInitialClear else { return }
+            observedInitialClear = true
+            let saved = tryState(store)
+            check(saved.checkedAt == now && saved.availableCount == 1
+                    && saved.inventory.map(\.id) == [second.id] && !noOpIsVisible()
+                    && saved.attempts[credit.id]?.outcome == "nothingToReset",
+                  "initial snapshot is durable before removed-credit notification cleanup")
+        }
+        try engine.tick(active: true)
+        check(observedInitialClear && service.calls.count == 1, "initial snapshot regression observes cleanup without consuming another credit")
+        notifier.beforeClear = nil
 
         let lease = try ResetLease(url: root.appendingPathComponent("worker.lock"))
         do { _ = try ResetLease(url: root.appendingPathComponent("worker.lock")); check(false, "second worker lock") }
