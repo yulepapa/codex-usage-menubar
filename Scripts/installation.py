@@ -197,8 +197,11 @@ class Mac:
     def stop(self, label):
         if self.job(label) is not None:
             self.run(['/bin/launchctl', 'bootout', self.domain + '/' + label])
-            if self.job(label) is not None:
-                raise InstallError('The selected service did not stop')
+            end = time.monotonic() + 8
+            while self.job(label) is not None:
+                if time.monotonic() >= end:
+                    raise InstallError('The selected service did not stop')
+                time.sleep(.1)
 
     def start(self, path):
         self.run(['/bin/launchctl', 'bootstrap', self.domain, path])

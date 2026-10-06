@@ -623,6 +623,12 @@ class MacAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(m.InstallError, 'identity'):
                 platform.verify_job('example.worker', Path('/example/agent.plist'), ['/example/Python', '/example/reset_credit_watcher.py'])
 
+    def test_bootout_waits_for_the_selected_service_to_disappear(self):
+        platform = m.Mac()
+        with patch.object(platform, 'job', side_effect=['loaded', 'exiting', None]), patch.object(platform, 'run') as run, patch.object(m.time, 'sleep'):
+            platform.stop('example.worker')
+        run.assert_called_once_with(['/bin/launchctl', 'bootout', platform.domain + '/example.worker'])
+
     def test_only_absent_service_code_is_accepted_as_missing(self):
         platform = m.Mac()
         with patch.object(platform, 'run', return_value=SimpleNamespace(returncode=113, stdout='')):
