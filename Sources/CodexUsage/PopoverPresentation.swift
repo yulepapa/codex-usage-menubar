@@ -150,7 +150,6 @@ struct PopoverPresentation {
 /// nil follows the earliest card; an explicit identity survives refresh/reordering.
 struct CreditStackSelection {
     private(set) var selectedID: String?
-    static let pageSize = 3
 
     mutating func reconcile(_ credits: [ResetCredit]) {
         if let selectedID, !credits.contains(where: { $0.id == selectedID }) { self.selectedID = nil }
@@ -164,8 +163,7 @@ struct CreditStackSelection {
     }
     func visible(in credits: [ResetCredit]) -> [ResetCredit] {
         guard let index = index(in: credits) else { return [] }
-        let page = index / Self.pageSize * Self.pageSize
-        return [credits[index]] + credits[page..<min(credits.count, page + Self.pageSize)].filter { $0.id != credits[index].id }
+        return [credits[index]] + credits.filter { $0.id != credits[index].id }
     }
     mutating func select(_ id: String, in credits: [ResetCredit]) {
         guard credits.contains(where: { $0.id == id }) else { return }

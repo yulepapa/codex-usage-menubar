@@ -140,7 +140,8 @@ enum PopoverPresentationTests {
         cards = (0..<100).map { ResetCredit(id: "card-\($0)", expiresAt: now.addingTimeInterval(Double(60 + $0))) }
         selection = CreditStackSelection()
         for index in 0..<100 {
-            check(selection.index(in: cards) == index && selection.visible(in: cards).count <= 3, "all cards selectable within bounded stack at \(index)")
+            check(selection.index(in: cards) == index && selection.visible(in: cards).count == cards.count,
+                  "every observed card remains individually visible at \(index)")
             selection.move(1, in: cards)
         }
         check(selection.index(in: cards) == 99, "next clamps at last card")

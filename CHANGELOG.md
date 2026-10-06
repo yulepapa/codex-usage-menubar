@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2 — 2026-10-06
+
+- Show a separate selectable tab for every observed reset credit. Four to six credits fit in the existing popover; additional tabs scroll horizontally with at least 44 pt of clickable width each.
+- Keep expiry order, selection, keyboard browsing and display-only card actions. Add native fixture checks for each card's hover and click target across four, five and six credits.
+
 ## 1.2.1 — 2026-10-06
 
 - Show distinct, fresh reset credits as overlapping cards ordered by expiry, with stable ID tie-breaking and a small hover lift.

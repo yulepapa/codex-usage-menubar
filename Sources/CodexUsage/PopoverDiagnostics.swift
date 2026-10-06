@@ -132,15 +132,57 @@ enum PopoverDiagnostics {
         state.inventory = [ResetCredit(id: "synthetic-tie-b", expiresAt: second.expiresAt), ResetCredit(id: "synthetic-tie-a", expiresAt: second.expiresAt)]
         view.model = make([five, week]); try save("stack-tied")
         try check(view.selectedCredit?.id == "synthetic-tie-a", "tied expiry orders by stable ID")
+        let extra = (4...6).map { ordinal in
+            ResetCredit(id: "synthetic-\(ordinal)", expiresAt: now.addingTimeInterval(Double(3600 + ordinal * 1200)))
+        }
+        for amount in 4...6 {
+            state.inventory = [third, first, second] + extra.prefix(amount - 3)
+            state.availableCount = amount; view.model = make([five, week])
+            if let selected = view.selectedCredit, selected.id != view.model.individualCredits.first?.id {
+                view.selectCard(selected.id)
+            }
+            view.setExpanded(false, animated: false)
+            try save("stack-\(amount)-default")
+            try check(view.visibleCredits.count == amount && view.backCardButtons.count == amount - 1,
+                      "\(amount) individual credits all have native card controls")
+            for target in view.model.individualCredits {
+                if view.selectedCredit?.id == target.id { continue }
+                guard let index = view.visibleCredits.dropFirst().firstIndex(where: { $0.id == target.id }) else {
+                    throw NSError(domain: "PopoverDiagnostics", code: 2, userInfo: [NSLocalizedDescriptionKey: "card missing from backing strip"])
+                }
+                let button = view.backCardButtons[index - 1]
+                try check(button.frame.width >= 44, "card exposes a 44 pt wide hit target")
+                try checkCardEdges(button)
+                let original = button.frame
+                button.mouseEntered(with: hoverEvent)
+                try check(view.hoveredCardID == target.id && view.hoverLift(for: target.id) == 3 && button.frame == original,
+                          "every card supports stable direct hover")
+                try clickAtCenter(button)
+                try check(view.selectedCredit?.id == target.id && view.expanded, "each exposed card selects its own credit")
+            }
+            try save("stack-\(amount)-selected")
+        }
         state.inventory = (0..<12).map { ResetCredit(id: "synthetic-many-\($0)", expiresAt: now.addingTimeInterval(Double(900 + $0 * 120))) }
         state.availableCount = 12; view.model = make([five, week])
         for ordinal in 0..<12 {
-            try check(view.selection.index(in: view.model.individualCredits) == ordinal && view.visibleCredits.count <= 3, "all many-card positions selectable within bounded stack")
+            try check(view.selection.index(in: view.model.individualCredits) == ordinal && view.visibleCredits.count == 12,
+                      "all many-card positions remain in the same real control strip")
             if ordinal < 11 { try clickAtCenter(view.nextCardButton) }
         }
         try save("stack-many-last")
         try check(!view.nextCardButton.isEnabled && view.previousCardButton.isEnabled, "many-card navigation has honest endpoints")
         view.moveCard(-5); try save("stack-many-selected")
+        let farID = view.visibleCredits.last!.id
+        let farButton = view.backCardButtons.last!
+        try check(farButton.frame.width >= 44 && farButton.scrollToVisible(farButton.bounds),
+                  "overflow cards keep a scrollable 44 pt target")
+        try clickAtCenter(farButton)
+        try check(view.selectedCredit?.id == farID, "last card is directly clickable after scrolling")
+        let firstBackingID = view.visibleCredits[1].id
+        let firstBackingButton = view.backCardButtons[0]
+        try check(firstBackingButton.scrollToVisible(firstBackingButton.bounds), "first tab scrolls back into view")
+        try clickAtCenter(firstBackingButton)
+        try check(view.selectedCredit?.id == firstBackingID, "first tab remains directly clickable after scrolling back")
         state.availableCount = 2; view.model = make([five, week]); try save("stack-count-mismatch")
         try check(view.model.individualCredits.count == 12 && !view.model.warnings.isEmpty, "mismatched total does not hide observed cards")
         state.checkedAt = now.addingTimeInterval(-181); view.model = make([five, week]); try save("stack-stale")
