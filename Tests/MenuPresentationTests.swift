@@ -19,7 +19,45 @@ enum MenuPresentationTests {
         check(menu().expiry?.contains("1/1 10:00 GMT+9") == true, "compact expiry preserves Seoul zone and date")
         check(menu().warnings.isEmpty, "normal monitoring has no status narration")
         state.phase = "nothingToReset"
+        state.attempts["synthetic-private-credit"] = Redemption(key: "synthetic-private-key", expiresAt: state.inventory[0].expiresAt,
+            attemptedAt: now, outcome: "nothingToReset")
         check(menu().warnings.contains(localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")), "service no-op is explicit and never described as successful use")
+        state.phase = "checking"
+        let noOpWarning = localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")
+        for age in [60, 179, 180, 181, -1] {
+            state.attempts["synthetic-private-credit"]?.attemptedAt = now.addingTimeInterval(-Double(age))
+            check(menu().warnings.contains(noOpWarning) == (age >= 0 && age < 180),
+                  "ledger warning obeys retry bounds while checking at age \(age)")
+        }
+        state.attempts["synthetic-private-credit"]?.attemptedAt = now.addingTimeInterval(-60)
+        for count: Int? in [0, nil] {
+            state.availableCount = count
+            check(!menu().warnings.contains(noOpWarning), "nonpositive or unknown count cannot revive a no-op warning")
+        }
+        state.availableCount = 2; state.lastError = "queryFailed"
+        check(menu().title == localized("Reset credits: unknown", "리셋권 확인 필요") && menu().warnings.contains(noOpWarning),
+              "known recent no-op does not imply a successful current query")
+        state.lastError = "refreshFailed"
+        check(!menu().warnings.contains(noOpWarning) && menu().warnings.contains(localized("Latest reset result needs refresh", "최근 처리 결과 재확인 필요")),
+              "refresh failure has priority over a recent no-op")
+        state.lastError = "resultUnknown"
+        check(!menu().warnings.contains(noOpWarning), "unknown result has priority over a recent no-op")
+        state.lastError = nil
+        state.attempts["synthetic-pending"] = Redemption(key: "synthetic-pending-key", expiresAt: now.addingTimeInterval(600),
+            attemptedAt: now, outcome: "pending")
+        check(!menu().warnings.contains(noOpWarning) && menu().warnings.contains(localized("Reset result unconfirmed · further use paused", "소비 결과 확인 필요 · 추가 사용 보류")),
+              "durable pending result has priority even while the worker phase is checking")
+        state.attempts.removeValue(forKey: "synthetic-pending")
+        for outcome in ["reset", "alreadyRedeemed", "noCredit"] {
+            state.attempts["synthetic-newer"] = Redemption(key: "synthetic-newer-key", expiresAt: now.addingTimeInterval(600),
+                attemptedAt: now, outcome: outcome)
+            check(!menu().warnings.contains(noOpWarning), "newer \(outcome) supersedes an earlier credit's no-op")
+            state.attempts["synthetic-newer"]?.attemptedAt = now.addingTimeInterval(-60)
+            check(!menu().warnings.contains(noOpWarning), "same-time \(outcome) supersedes a no-op independently of dictionary order")
+        }
+        state.attempts["synthetic-newer"]?.attemptedAt = now.addingTimeInterval(-61)
+        check(menu().warnings.contains(noOpWarning), "older terminal result does not suppress a newer no-op")
+        state.attempts.removeValue(forKey: "synthetic-newer")
         state.phase = "monitoring"
         state.attempts["synthetic-private-credit"] = Redemption(key: "synthetic-private-key", expiresAt: now,
             attemptedAt: now.addingTimeInterval(-86400), outcome: "reset")

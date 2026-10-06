@@ -29,8 +29,10 @@ final class FakeResetService: ResetService {
     var failReadAt: Int?
     var failConsume = false
     var beforeConsume: (() throws -> Void)?
+    var beforeRead: (() throws -> Void)?
     func read() throws -> UsagePayload {
         readCount += 1
+        try beforeRead?()
         if failRead || readCount == failReadAt { throw ResetStorageError.invalid }
         return snapshots.isEmpty ? fallback : snapshots.removeFirst()
     }
@@ -45,8 +47,9 @@ final class FakeResetNotifier: ResetNotifier {
     var status = "authorized"
     var delivered: [Int] = []
     var cleared: [String] = []
+    var beforeClear: ((ResetCredit) -> Void)?
     func send(credit: ResetCredit, milestone: Int, now: Date) throws { delivered.append(milestone) }
-    func clear(credit: ResetCredit) { cleared.append(credit.id) }
+    func clear(credit: ResetCredit) { beforeClear?(credit); cleared.append(credit.id) }
 }
 
 @main enum ResetEngineTests {
@@ -82,9 +85,9 @@ final class FakeResetNotifier: ResetNotifier {
             try store.write("ownership.json", ["active": true])
             try store.write("state.json", ResetEngineState())
             service.fallback = snapshot(); service.snapshots = []; service.calls = []; service.outcome = "reset"
-            service.failRead = false; service.failConsume = false; service.beforeConsume = nil
+            service.failRead = false; service.failConsume = false; service.beforeConsume = nil; service.beforeRead = nil
             service.readCount = 0; service.failReadAt = nil
-            notifier.delivered = []; notifier.cleared = []; notifier.status = "authorized"
+            notifier.delivered = []; notifier.cleared = []; notifier.status = "authorized"; notifier.beforeClear = nil
             return ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
         }
         var engine = try reset()
@@ -364,8 +367,185 @@ final class FakeResetNotifier: ResetNotifier {
         engine = try reset(); service.outcome = "nothingToReset"; service.fallback = snapshot(primary: 0, weekly: 0)
         try engine.tick(active: true)
         check(tryState(store).phase == "nothingToReset" && tryState(store).attempts[credit.id]?.outcome == "nothingToReset", "100% remaining can receive a service no-op without pretending success")
-        now = now.addingTimeInterval(179); try engine.tick(active: true)
-        check(service.calls.count == 1, "known service no-op respects the retry delay")
+        let noOpTime = now
+        let noOpKey = service.calls.first!.1
+        let noOpWarning = localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")
+        func noOpIsVisible() -> Bool {
+            ResetMenuPresentation.native(state: tryState(store), settings: ResetSettings(autoUse: true, reminders: true),
+                                         active: true, now: now).warnings.contains(noOpWarning)
+        }
+        check(noOpIsVisible(), "service no-op is visible immediately after the response")
+        for elapsed in [60, 120, 179] {
+            now = noOpTime.addingTimeInterval(Double(elapsed))
+            engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+            let freshRead = service.readCount + 2
+            service.beforeRead = {
+                guard service.readCount == freshRead else { return }
+                check(tryState(store).phase == "checking" && noOpIsVisible(),
+                      "persisted intermediate state retains the warning during the fresh read at \(elapsed)s")
+            }
+            try engine.tick(active: true)
+            service.beforeRead = nil
+            check(service.calls.count == 1 && tryState(store).attempts[credit.id]?.key == noOpKey,
+                  "known service no-op preserves the attempt during retry delay at \(elapsed)s after restart")
+            check(tryState(store).phase == "nothingToReset" && noOpIsVisible(),
+                  "next tick retains the no-op menu warning at \(elapsed)s after restart")
+        }
+        now = noOpTime.addingTimeInterval(180); service.outcome = "reset"
+        try engine.tick(active: true)
+        check(service.calls.count == 2 && service.calls.last!.1 != noOpKey,
+              "known no-op retries at exactly 180 seconds with a new logical attempt")
+        check(tryState(store).phase == "reset" && !noOpIsVisible(),
+              "authoritative success replaces the no-op warning")
+        now = expiry.addingTimeInterval(-1200)
+        engine = try reset(); service.outcome = "nothingToReset"
+        try engine.tick(active: true)
+        now = now.addingTimeInterval(60)
+        let interruptedFreshRead = service.readCount + 2
+        var interruptedState: ResetEngineState?
+        service.beforeRead = {
+            guard service.readCount == interruptedFreshRead else { return }
+            interruptedState = try store.state()
+            check(interruptedState?.phase == "checking" && noOpIsVisible(),
+                  "warning survives the intermediate save before a failed fresh read")
+            throw SimulatedResetError.responseTimeout
+        }
+        try engine.tick(active: true)
+        check(tryState(store).lastError == "queryFailed" && noOpIsVisible() && service.calls.count == 1,
+              "failed fresh read retains the known no-op warning without another consume")
+        // A terminated worker leaves the intermediate save, without executing catch.
+        try store.write("state.json", interruptedState!)
+        check(noOpIsVisible(), "interrupted worker's on-disk checking state retains its no-op warning")
+        service.beforeRead = nil; service.failRead = true
+        engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+        try engine.tick(active: true)
+        check(tryState(store).lastError == "queryFailed" && noOpIsVisible() && service.calls.count == 1,
+              "restart with another read failure preserves the durable no-op warning")
+        for scenario in ["missing", "expired", "changed"] {
+            now = expiry.addingTimeInterval(-120)
+            engine = try reset(); service.outcome = "nothingToReset"
+            try engine.tick(active: true)
+            now = now.addingTimeInterval(scenario == "expired" ? 120 : 60)
+            if scenario == "missing" { service.fallback = snapshot(credits: []) }
+            if scenario == "changed" {
+                service.fallback = snapshot(credits: [ResetCredit(id: credit.id, expiresAt: expiry.addingTimeInterval(30))])
+            }
+            try engine.tick(active: true)
+            check(service.calls.count == 1 && !noOpIsVisible(),
+                  "\(scenario) credit does not revive a historical no-op warning")
+        }
+
+        for scenario in ["zeroCount", "unknownCount", "changedExpiry"] {
+            now = expiry.addingTimeInterval(-1200)
+            engine = try reset(); service.outcome = "nothingToReset"
+            try engine.tick(active: true)
+            now = now.addingTimeInterval(60)
+            let freshCredit = ResetCredit(id: credit.id, expiresAt: scenario == "changedExpiry" ? expiry.addingTimeInterval(30) : expiry)
+            let freshCount: Int? = scenario == "unknownCount" ? nil : (scenario == "zeroCount" ? 0 : 1)
+            let invalidFresh = UsagePayload(bucketLabel: nil, windows: [],
+                credits: CreditInfo(availableCount: freshCount, earliestExpiresAt: nil), resetCredits: [freshCredit])
+            service.snapshots = [snapshot(), invalidFresh]
+            let invalidatingRead = service.readCount + 2
+            service.beforeRead = {
+                if service.readCount == invalidatingRead { now = now.addingTimeInterval(1) }
+            }
+            try engine.tick(active: true)
+            service.beforeRead = nil
+            let lastFreshReadTime = now
+            func retainsFreshSnapshot() -> Bool {
+                let saved = tryState(store)
+                return saved.availableCount == freshCount && saved.checkedAt == lastFreshReadTime
+                    && saved.inventory.count == 1 && saved.inventory.first?.id == freshCredit.id
+                    && saved.inventory.first?.expiresAt == freshCredit.expiresAt
+                    && saved.attempts[credit.id]?.outcome == "nothingToReset"
+                    && saved.attempts[credit.id]?.key == service.calls.first?.1
+            }
+            check(tryState(store).phase == "waitingForCredit" && !noOpIsVisible() && service.calls.count == 1,
+                  "fresh \(scenario) invalidation clears the earlier snapshot's no-op warning")
+            check(retainsFreshSnapshot(), "fresh \(scenario) count, inventory and read time replace the first snapshot without changing the ledger")
+            now = now.addingTimeInterval(1); service.failRead = true
+            try engine.tick(active: true)
+            check(tryState(store).phase == "queryFailed" && !noOpIsVisible() && retainsFreshSnapshot() && service.calls.count == 1,
+                  "next tick read failure cannot revive the snapshot invalidated by fresh \(scenario)")
+            now = now.addingTimeInterval(1)
+            engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+            try engine.tick(active: true)
+            check(tryState(store).phase == "queryFailed" && !noOpIsVisible() && retainsFreshSnapshot() && service.calls.count == 1,
+                  "restart read failure retains fresh \(scenario) knowledge and keeps the superseded no-op hidden")
+        }
+
+        for scenario in ["zeroCount", "unknownCount", "changedExpiry", "missingID"] {
+            now = expiry.addingTimeInterval(-1200)
+            engine = try reset(); service.outcome = "nothingToReset"
+            try engine.tick(active: true)
+            let originalKey = service.calls.first!.1
+            now = now.addingTimeInterval(60)
+            let freshCredit = ResetCredit(id: credit.id, expiresAt: scenario == "changedExpiry" ? expiry.addingTimeInterval(30) : expiry)
+            let freshInventory = scenario == "missingID" ? [second] : [freshCredit, second]
+            let freshCount: Int? = scenario == "unknownCount" ? nil : (scenario == "zeroCount" ? 0 : freshInventory.count)
+            let invalidFresh = UsagePayload(bucketLabel: nil, windows: [],
+                credits: CreditInfo(availableCount: freshCount, earliestExpiresAt: nil), resetCredits: freshInventory)
+            service.snapshots = [snapshot(credits: [credit, second]), invalidFresh]
+            let freshRead = service.readCount + 2
+            var freshReadTime = now
+            var interrupted: ResetEngineState?
+            var observedClear = false
+            func durableInvalidation() -> Bool {
+                let saved = tryState(store)
+                return saved.availableCount == freshCount && saved.checkedAt == freshReadTime
+                    && saved.inventory.map(\.id) == freshInventory.map(\.id)
+                    && saved.inventory.map(\.expiresAt) == freshInventory.map(\.expiresAt)
+                    && saved.attempts[credit.id]?.key == originalKey
+                    && saved.attempts[credit.id]?.outcome == "nothingToReset"
+                    && saved.attempts[second.id] == nil && !noOpIsVisible()
+            }
+            notifier.beforeClear = { cleared in
+                guard scenario == "missingID", cleared.id == credit.id else { return }
+                observedClear = true
+                check(durableInvalidation(), "fresh missing-ID snapshot is on disk before clearing its notification")
+            }
+            service.beforeRead = {
+                if service.readCount == freshRead {
+                    now = now.addingTimeInterval(1); freshReadTime = now
+                } else if service.readCount == freshRead + 1 {
+                    check(durableInvalidation(), "fresh \(scenario) snapshot is on disk before the next credit's read returns")
+                    interrupted = try store.state()
+                    throw SimulatedResetError.responseTimeout
+                }
+            }
+            try engine.tick(active: true)
+            check(interrupted != nil && service.calls.count == 1 && durableInvalidation(),
+                  "two-credit \(scenario) invalidation remains durable after the later read fails")
+            if scenario == "missingID" { check(observedClear, "missing-ID regression observes the notification callback") }
+            // Restore exactly the disk state visible before the later read's catch,
+            // as if the worker had terminated while that read was blocked.
+            try store.write("state.json", interrupted!)
+            service.beforeRead = nil; notifier.beforeClear = nil; service.failRead = true
+            engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+            try engine.tick(active: true)
+            check(durableInvalidation() && service.calls.count == 1 && tryState(store).phase == "queryFailed",
+                  "restart after a blocked second-credit read preserves fresh \(scenario) knowledge")
+        }
+
+        now = expiry.addingTimeInterval(-1200)
+        engine = try reset(); service.outcome = "nothingToReset"
+        try engine.tick(active: true)
+        now = now.addingTimeInterval(60)
+        try store.updateSettings { $0.autoUse = false }
+        service.fallback = snapshot(credits: [second])
+        var observedInitialClear = false
+        notifier.beforeClear = { cleared in
+            guard cleared.id == credit.id, !observedInitialClear else { return }
+            observedInitialClear = true
+            let saved = tryState(store)
+            check(saved.checkedAt == now && saved.availableCount == 1
+                    && saved.inventory.map(\.id) == [second.id] && !noOpIsVisible()
+                    && saved.attempts[credit.id]?.outcome == "nothingToReset",
+                  "initial snapshot is durable before removed-credit notification cleanup")
+        }
+        try engine.tick(active: true)
+        check(observedInitialClear && service.calls.count == 1, "initial snapshot regression observes cleanup without consuming another credit")
+        notifier.beforeClear = nil
 
         let lease = try ResetLease(url: root.appendingPathComponent("worker.lock"))
         do { _ = try ResetLease(url: root.appendingPathComponent("worker.lock")); check(false, "second worker lock") }

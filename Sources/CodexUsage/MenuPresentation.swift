@@ -27,11 +27,12 @@ struct ResetMenuPresentation {
                     && state.workerSeenAt.map({ (0...180).contains(now.timeIntervalSince($0)) }) != true {
             value.warnings.append(localized("Reset worker has not checked recently", "감시기 최근 확인 없음"))
         }
-        if state.lastError == "resultUnknown" || state.phase == "needsReview" {
+        if state.lastError == "resultUnknown" || state.phase == "needsReview"
+            || state.attempts.values.contains(where: { $0.outcome == "pending" }) {
             value.warnings.append(localized("Reset result unconfirmed · further use paused", "소비 결과 확인 필요 · 추가 사용 보류"))
         } else if state.lastError == "refreshFailed" {
             value.warnings.append(localized("Latest reset result needs refresh", "최근 처리 결과 재확인 필요"))
-        } else if state.phase == "nothingToReset" {
+        } else if hasDeferredNoOp(state: state, now: now) {
             value.warnings.append(localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음"))
         }
         if settings.reminders {
@@ -46,6 +47,20 @@ struct ResetMenuPresentation {
             }
         }
         return value
+    }
+
+    private static func hasDeferredNoOp(state: ResetEngineState, now: Date) -> Bool {
+        // Worker phases are transient and may be saved before a slow read.
+        // Keep the authoritative result visible from its durable ledger entry.
+        guard (state.availableCount ?? 0) > 0 else { return false }
+        return state.inventory.contains { credit in
+            guard let attempt = state.attempts[credit.id], attempt.outcome == "nothingToReset",
+                  attempt.expiresAt == credit.expiresAt, credit.expiresAt > now else { return false }
+            let age = now.timeIntervalSince(attempt.attemptedAt)
+            return age >= 0 && age < 180 && !state.attempts.values.contains {
+                $0.attemptedAt >= attempt.attemptedAt && ["reset", "alreadyRedeemed", "noCredit"].contains($0.outcome)
+            }
+        }
     }
 
     static func legacy(credits: CreditInfo?, watcher: ResetWatcherSnapshot, now: Date,

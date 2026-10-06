@@ -139,12 +139,12 @@ final class ResetEngine {
         state.availableCount = snapshot.credits.availableCount
         let previousInventory = state.inventory
         state.inventory = snapshot.resetCredits.sorted { $0.expiresAt < $1.expiresAt }
+        try save(state) // Publish the snapshot before any notification work.
         let availableIDs = Set(state.inventory.map { $0.id })
         for old in previousInventory where !availableIDs.contains(old.id) { notifier.clear(credit: old) }
         for old in state.attempts where !availableIDs.contains(old.key) {
             notifier.clear(credit: ResetCredit(id: old.key, expiresAt: old.value.expiresAt))
         }
-        try save(state)
         guard active else { return }
 
         let coolingDown = state.attempts.values.contains {
@@ -182,9 +182,14 @@ final class ResetEngine {
                 let fresh: UsagePayload
                 do { fresh = try service.read() }
                 catch { state.phase = "queryFailed"; state.lastError = "queryFailed"; try save(state); return }
+                // Every successful read supersedes the previous snapshot on disk,
+                // before a notifier, another credit's read, or dispatch can block.
+                state.inventory = fresh.resetCredits
+                state.availableCount = fresh.credits.availableCount
+                state.checkedAt = clock()
+                try save(state)
                 guard fresh.resetCredits.contains(where: { $0.id == credit.id }) else {
                     notifier.clear(credit: credit)
-                    state.inventory = fresh.resetCredits; state.availableCount = fresh.credits.availableCount
                     if unresolved[credit.id] != nil {
                         state.phase = "needsReview"; state.lastError = "resultUnknown"
                         try remindAvailableInventory(settings: settings, state: &state); return
@@ -200,6 +205,11 @@ final class ResetEngine {
                     let prior = state.attempts[credit.id]
                     let key = prior?.outcome == "pending" ? prior!.key : UUID().uuidString
                     if let prior, clock().timeIntervalSince(prior.attemptedAt) < 180 {
+                        // Each tick starts in checking. Keep the service's known
+                        // no-op visible while this verified credit awaits retry.
+                        if prior.outcome == "nothingToReset", prior.expiresAt == current.expiresAt {
+                            state.phase = "nothingToReset"
+                        }
                         try remind(credit, settings: settings, state: &state)
                         continue
                     }
