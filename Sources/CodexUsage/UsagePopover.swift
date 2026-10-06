@@ -250,6 +250,30 @@ final class UsagePopoverView: NSView {
         return localized("Credit \(position) of \(model.individualCredits.count)", "리셋권 \(position) / \(model.individualCredits.count)")
             + " · " + PopoverPresentation.date(credit.expiresAt)
     }
+    private func compactCreditExpiry(_ date: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = PopoverPresentation.seoul
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = PopoverPresentation.seoul
+        formatter.dateFormat = calendar.component(.year, from: date) == calendar.component(.year, from: model.now)
+            ? "M/d HH:mm" : "yy/M/d HH:mm"
+        return formatter.string(from: date)
+    }
+    private func compactTicketLabel(ordinal: Int?) -> String {
+        if let date = selectedCredit?.expiresAt ?? model.expiresAt, date > model.now {
+            let expiry = compactCreditExpiry(date)
+            return ordinal.map { localized("#\($0) expires · \(expiry)", "\($0)번 만료 · \(expiry)") }
+                ?? localized("Earliest expiry · \(expiry)", "첫 만료 · \(expiry)")
+        }
+        if let date = model.expiresAt, date <= model.now {
+            return localized("Refresh expired credit", "만료 정보 재확인")
+        }
+        return ordinal.map { localized("Credit \($0) · check expiry", "\($0)번 · 만료 확인") }
+            ?? (model.count.map { $0 > 0 } == true
+                ? localized("Check expiry details", "만료 정보 확인")
+                : localized("Check details", "정보 확인"))
+    }
 
     func setExpanded(_ value: Bool, animated: Bool = true) {
         ticketStart = ticketProgress; ticketBegan = Date(); expanded = value
@@ -298,18 +322,32 @@ final class UsagePopoverView: NSView {
         }
         autoButton.state = model.autoUse ? .on : .off
         autoButton.setAccessibilityValue(model.autoUse ? 1 : 0)
+        autoButton.setAccessibilityLabel(model.autoUse ? localized("Automatic credit use on", "자동 사용 켜짐")
+            : localized("Automatic credit use off", "자동 사용 꺼짐"))
         autoButton.isEnabled = model.canEdit
-        autoButton.toolTip = model.canEdit ? localized("Change automatic credit use", "자동 사용 설정 변경") : localized("Worker/settings unavailable", "실행기·설정 확인 필요")
+        autoButton.toolTip = model.canEdit
+            ? (model.autoUse
+                ? localized("Auto-use on · click to turn off", "자동 사용 켜짐 · 클릭하면 끔")
+                : localized("Auto-use off · click to turn on", "자동 사용 꺼짐 · 클릭하면 켬"))
+                + localized(" · Attempts in final 20 min, regardless of remaining usage", " · 만료 20분 이내 · 잔여량 무관")
+            : localized("Worker/settings unavailable", "실행기·설정 확인 필요")
         reminderButton.state = model.reminders ? .on : .off; reminderButton.isEnabled = model.canEdit
         refreshButton.isEnabled = !model.refreshing
+        refreshButton.setAccessibilityLabel(localized("Refresh usage", "사용량 새로고침"))
+        refreshButton.toolTip = model.refreshing ? localized("Refreshing usage", "사용량 새로고침 중")
+            : localized("Refresh usage now (⌘R)", "사용량 새로고침 (⌘R)")
         ticketButton.frame = NSRect(x: 410, y: 105, width: 224, height: expanded ? 139 : 83)
         let returnToDefault = selectedCredit != nil && selectedCredit?.id != model.individualCredits.first?.id
-        ticketButton.setAccessibilityLabel(returnToDefault ? localized("Return to earliest credit", "가장 먼저 만료되는 리셋권으로 돌아가기")
-            : expanded ? localized("Collapse credit expiry", "리셋권 만료 상세 접기") : localized("Expand credit expiry", "리셋권 만료 상세 펼치기"))
+        let frontAction = returnToDefault ? localized("Return to earliest credit", "가장 먼저 만료되는 리셋권으로 돌아가기")
+            : expanded ? localized("Collapse credit expiry", "리셋권 만료 상세 접기")
+                : localized("Expand credit expiry", "리셋권 만료 상세 펼치기")
+        let frontDescription = selectedCredit.map(cardLabel)
+        ticketButton.setAccessibilityLabel(frontDescription.map { $0 + " · " + frontAction } ?? frontAction)
         ticketButton.setAccessibilityExpanded(expanded)
-        ticketButton.setAccessibilityValue(selectedCredit.map(cardLabel) ?? localized("Individual credit information unavailable", "개별 리셋권 정보 미제공"))
-        ticketButton.toolTip = (selectedCredit.map(cardLabel) ?? localized("No individual credit details", "개별 리셋권 정보 없음"))
-            + localized(" · Selection only · Left/Right to browse", " · 정보 선택만 · 좌우 화살표로 이동")
+        ticketButton.setAccessibilityValue(frontDescription ?? localized("Individual credit information unavailable", "개별 리셋권 정보 미제공"))
+        ticketButton.toolTip = (frontDescription ?? localized("No individual credit details", "개별 리셋권 정보 없음"))
+            + " · " + frontAction
+            + localized(" · Display only · Left/Right to browse", " · 표시만 변경 · 좌우 화살표로 이동")
         let backing = Array(visibleCredits.dropFirst())
         while backCardButtons.count < backing.count {
             let index = backCardButtons.count
@@ -389,7 +427,8 @@ final class UsagePopoverView: NSView {
         text(subtitle, x: 27, y: 59, size: 12, color: Palette.muted, body: true, maxWidth: 580)
         line((617, 27), (629, 39), Palette.muted, 1.6); line((629, 27), (617, 39), Palette.muted, 1.6)
         line((24, 378), (636, 378), Palette.rule, 1)
-        text(model.refreshing ? localized("Refreshing…", "새로고침 중…") : localized("Refresh", "새로고침"), x: 28, y: 392, size: 11, color: Palette.muted, body: true)
+        text(model.refreshing ? "…" : "↻", x: 68, y: 392, size: 18,
+             color: Palette.muted, body: true, center: true)
         text(showingDetails ? localized("← Usage", "← 사용량") : localized("Details · alerts", "상세 · 알림 설정") + (model.warnings.isEmpty ? "" : " •"), x: 128, y: 392, size: 11, color: Palette.muted, body: true)
         text("v" + appVersion, x: 540, y: 392, size: 11, color: Palette.muted, body: true, right: true)
         text(localized("Quit", "종료"), x: 629, y: 392, size: 11, color: Palette.muted, body: true, right: true)
@@ -439,7 +478,7 @@ final class UsagePopoverView: NSView {
             let caption = model.count == model.individualCredits.count
                 ? model.individualCredits.count > 6
                     ? localized("\(ordinal) / \(model.individualCredits.count) · scroll tabs", "선택 \(ordinal) / \(model.individualCredits.count) · 좌우 스크롤")
-                    : localized("\(ordinal) / \(model.individualCredits.count) · expiry order", "선택 \(ordinal) / \(model.individualCredits.count) · 만료순")
+                    : "\(ordinal) / \(model.individualCredits.count)"
                 : localized("\(ordinal)/\(model.individualCredits.count) details · total \(count)", "정보 \(ordinal)/\(model.individualCredits.count) · 보유 \(count)")
             text(caption, x: 522, y: 252, size: 10, color: Palette.muted, body: true, center: true, maxWidth: 166)
         } else if model.count != model.individualCredits.count, model.count != 0 {
@@ -458,9 +497,8 @@ final class UsagePopoverView: NSView {
         for x in stride(from: 421, to: 624, by: 9) { line((CGFloat(x), 152), (CGFloat(x + 4), 152), Palette.color(0x8A744C), 0.75) }
         let ordinal = selection.index(in: model.individualCredits).map { $0 + 1 }
         if q < 1 {
-            let label = ordinal.map { localized("Credit \($0) · view expiry", "\($0)번 · 만료 확인") }
-                ?? (known ? localized("View earliest expiry", "첫 만료 확인") : localized("Check details", "정보 확인"))
-            text(label, x: 424, y: 164, size: 17, color: Palette.ink.withAlphaComponent(1 - q), maxWidth: 194)
+            text(compactTicketLabel(ordinal: ordinal), x: 424, y: 164, size: 15,
+                 color: Palette.ink.withAlphaComponent(1 - q), maxWidth: 194)
         }
         if q > 0 {
             NSGraphicsContext.saveGraphicsState()
@@ -482,6 +520,8 @@ final class UsagePopoverView: NSView {
         text(localized("Auto-use", "자동 사용"), x: 410, y: 277, size: 25, display: true, maxWidth: 127)
         let color = Palette.color(0xADB4AA).blended(withFraction: switchProgress, of: Palette.lime)!
         fill(NSRect(x: 545, y: 268, width: 89, height: 42), radius: 21, color: color)
+        text(model.autoUse ? localized("On", "켜짐") : localized("Off", "꺼짐"),
+             x: model.autoUse ? 554 : 590, y: 289, size: 12, color: Palette.ink, body: true, middle: true)
         let cx = 566 + 47 * switchProgress
         dot(cx, 289, 16.6, Palette.white)
         if switchProgress > 0.5 { line((cx, 284), (cx, 294), Palette.ink, 3) }
@@ -489,7 +529,6 @@ final class UsagePopoverView: NSView {
         fill(NSRect(x: 410, y: 325, width: 224, height: 29), radius: 14.5, color: Palette.ink)
         dot(425, 339.5, 3, Palette.apricot)
         text(model.status.title, x: 527, y: 339.5, size: 18, color: Palette.lime, display: true, middle: true, center: true, maxWidth: 186)
-        text(localized("Final 20 min · any usage level", "만료 20분 이내 · 잔여량 무관"), x: 410, y: 362, size: 12, color: Palette.muted, maxWidth: 224)
     }
     private func fill(_ rect: NSRect, radius: CGFloat, color: NSColor) {
         color.setFill(); NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()

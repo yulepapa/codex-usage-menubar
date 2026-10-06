@@ -80,6 +80,17 @@ enum PopoverDiagnostics {
         state.inventory = [first]; state.availableCount = 1
         view.model = make([five, week]); try save("stack-one")
         try check(view.visibleCredits.count == 1 && view.nextCardButton.isHidden, "one card has no fake backing or navigation")
+        let firstExpiry = PopoverPresentation.date(first.expiresAt)
+        try check(view.ticketButton.accessibilityLabel()?.contains(firstExpiry) == true
+                      && view.ticketButton.toolTip?.contains(firstExpiry) == true,
+                  "collapsed credit exposes its Seoul expiry and action to assistive technology")
+        try check(view.refreshButton.accessibilityLabel() == localized("Refresh usage", "사용량 새로고침")
+                      && view.refreshButton.toolTip?.contains("⌘R") == true,
+                  "icon refresh retains an explicit accessible name and shortcut hint")
+        try check(view.autoButton.accessibilityLabel() == localized("Automatic credit use on", "자동 사용 켜짐"),
+                  "enabled auto-use states its current setting")
+        try check(make([five, week]).details.contains(where: { $0.contains(localized("regardless of remaining usage", "잔여량 무관")) }),
+                  "Details explains the usage-independent final-20-minute rule")
         state.inventory = [third, first, second]; state.availableCount = 3
         view.model = make([five, week]); view.setExpanded(false, animated: false)
         try save("stack-three-default")
@@ -187,6 +198,11 @@ enum PopoverDiagnostics {
         try check(view.model.individualCredits.count == 12 && !view.model.warnings.isEmpty, "mismatched total does not hide observed cards")
         state.checkedAt = now.addingTimeInterval(-181); view.model = make([five, week]); try save("stack-stale")
         try check(view.visibleCredits.isEmpty, "stale inventory removes selectable cards")
+        state.checkedAt = now; state.availableCount = 1
+        state.inventory = [ResetCredit(id: "synthetic-expired", expiresAt: now.addingTimeInterval(-60))]
+        view.model = make([five, week]); try save("stack-expired")
+        try check(view.visibleCredits.isEmpty && view.backCardButtons.allSatisfy(\.isHidden),
+                  "expired credit does not remain a selectable live card")
         state.checkedAt = now; state.inventory = [first, second, third]; state.availableCount = 3
         state.attempts["synthetic-pending"] = Redemption(key: "synthetic", expiresAt: first.expiresAt, attemptedAt: now, outcome: "pending")
         view.model = make([five, week]); view.selectCard(third.id); try save("stack-pending-selected")
@@ -208,6 +224,9 @@ enum PopoverDiagnostics {
         view.onRefresh = { refreshCalls += 1; view.model = make([week]) }
         view.autoButton.performClick(nil)
         try check(autoCalls == 1 && !view.model.autoUse && view.switchProgress == 0, "mock auto-use toggles model and reduced-motion artwork")
+        try check(view.autoButton.accessibilityLabel() == localized("Automatic credit use off", "자동 사용 꺼짐")
+                      && view.autoButton.toolTip?.contains(localized("click to turn on", "클릭하면 켬")) == true,
+                  "off switch text and tooltip describe the next action")
         view.setDetails(true); view.reminderButton.performClick(nil)
         try check(reminderCalls == 1 && !view.model.reminders, "mock reminder toggle updates model")
         view.setDetails(false); view.refreshButton.performClick(nil)

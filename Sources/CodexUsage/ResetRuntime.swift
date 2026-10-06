@@ -144,7 +144,8 @@ enum NativeResetSection {
             rows.append(localized("Notifications need permission or delivery check", "알림 권한 또는 전달 상태 확인 필요"))
         }
         rows.append(localized("Alerts: 1 hr, 20 min, 5 min before expiry", "만료 알림: 1시간 · 20분 · 5분 전"))
-        rows.append(localized("Mac must be awake · attempts in final 20 min", "Mac이 깨어 있어야 함 · 만료 20분 이내 시도"))
+        rows.append(localized("Mac must be awake · attempts in final 20 min regardless of remaining usage",
+                              "Mac이 깨어 있어야 함 · 만료 20분 이내 시도 · 잔여량 무관"))
         return rows
     }
 }

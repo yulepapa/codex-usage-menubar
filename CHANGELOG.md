@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3 — 2026-10-06
+
+- Show the selected credit's Seoul expiry directly on its collapsed ticket; keep unknown or expired data explicit rather than inventing an active credit.
+- Shorten the small card position to `1 / 2`, label the auto-use switch on/off in text, and move the final-20-minute/usage-independent rule into Details.
+- Replace the footer refresh word with an icon while retaining its full click target, tooltip, VoiceOver label and Command-R shortcut. Keep menu-bar usage and redemption policy unchanged.
+
 ## 1.2.2 — 2026-10-06
 
 - Show a separate selectable tab for every observed reset credit. Four to six credits fit in the existing popover; additional tabs scroll horizontally with at least 44 pt of clickable width each.
