@@ -4,7 +4,10 @@
 flowchart LR
     UI[Menu: main.swift] --> Read[CodexClient: account/rateLimits/read]
     UI --> Settings[ResetStore: settings and wake signal]
-    Launch[Existing user LaunchAgent] --> Worker[ResetWorker with process lease]
+    Install[Unified installer] --> Launch[User LaunchAgent]
+    Install --> MenuLaunch[Menu login service]
+    MenuLaunch --> UI
+    Launch --> Worker[ResetWorker with process lease]
     Worker --> Engine[ResetEngine]
     Engine --> Read
     Engine --> Ledger[Private durable ledger]
@@ -22,6 +25,10 @@ flowchart LR
 
 The menu alone never consumes. The CLI consumption result remains authoritative: `reset`, `alreadyRedeemed`, `nothingToReset` and `noCredit` are distinct. An empty credit list is not proof of redemption. Notification status and redemption status are independent.
 
-The portable Python handoff helper selects an existing legacy service explicitly, checks read-only access, backs up, stages the bundle, stops the old consumer, captures its final ledger, and then repoints the same label. Its optional enable flag governs automatic use. This helper is packaging/operations code; it does not change the installed v1.1.0 Swift runtime.
+`Scripts/install.sh` and `uninstall.sh` call `installation.py` for one lifecycle. New installations create both user services, with auto-use off and reminders on. Updates reuse the registered worker's label and executable location and keep existing settings. A single recognized legacy Python service is stopped before its final ledger is imported and its label repointed. Ambiguous services and uncertain legacy outcomes block changes.
+
+An installation lock serializes lifecycle operations. After both processes exit, worker/settings locks protect the final records while files are replaced. A durable journal and private bundle/configuration backups recover interrupted transactions. The worker and menu first start with inactive ownership, so startup verification cannot redeem or notify. Ownership is activated only after the transaction commits; interrupted activation completes forward and never rolls an activated worker back onto an older recovery record. Removal does not activate a paused transaction. `state.json` is never restored from a stale snapshot, and uninstall retains it with settings and backups.
+
+The older `reset-worker.py` remains for recovery of backups created by that helper. New installations and ordinary upgrades use the unified installer. No Swift consumption or notification policy is changed by this installation work.
 
 `MenuPresentation.swift` provides compact, read-only count/expiry presentation and conditional warnings. Normal worker status/history/timing explanations stay in the Details submenu. It changes no consume, notifier or worker policy.
