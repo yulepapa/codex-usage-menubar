@@ -364,8 +364,42 @@ final class FakeResetNotifier: ResetNotifier {
         engine = try reset(); service.outcome = "nothingToReset"; service.fallback = snapshot(primary: 0, weekly: 0)
         try engine.tick(active: true)
         check(tryState(store).phase == "nothingToReset" && tryState(store).attempts[credit.id]?.outcome == "nothingToReset", "100% remaining can receive a service no-op without pretending success")
-        now = now.addingTimeInterval(179); try engine.tick(active: true)
-        check(service.calls.count == 1, "known service no-op respects the retry delay")
+        let noOpTime = now
+        let noOpKey = service.calls.first!.1
+        let noOpWarning = localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")
+        func noOpIsVisible() -> Bool {
+            ResetMenuPresentation.native(state: tryState(store), settings: ResetSettings(autoUse: true, reminders: true),
+                                         active: true, now: now).warnings.contains(noOpWarning)
+        }
+        check(noOpIsVisible(), "service no-op is visible immediately after the response")
+        for elapsed in [60, 120, 179] {
+            now = noOpTime.addingTimeInterval(Double(elapsed))
+            engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
+            try engine.tick(active: true)
+            check(service.calls.count == 1 && tryState(store).attempts[credit.id]?.key == noOpKey,
+                  "known service no-op preserves the attempt during retry delay at \(elapsed)s after restart")
+            check(tryState(store).phase == "nothingToReset" && noOpIsVisible(),
+                  "next tick retains the no-op menu warning at \(elapsed)s after restart")
+        }
+        now = noOpTime.addingTimeInterval(180); service.outcome = "reset"
+        try engine.tick(active: true)
+        check(service.calls.count == 2 && service.calls.last!.1 != noOpKey,
+              "known no-op retries at exactly 180 seconds with a new logical attempt")
+        check(tryState(store).phase == "reset" && !noOpIsVisible(),
+              "authoritative success replaces the no-op warning")
+        for scenario in ["missing", "expired", "changed"] {
+            now = expiry.addingTimeInterval(-120)
+            engine = try reset(); service.outcome = "nothingToReset"
+            try engine.tick(active: true)
+            now = now.addingTimeInterval(scenario == "expired" ? 120 : 60)
+            if scenario == "missing" { service.fallback = snapshot(credits: []) }
+            if scenario == "changed" {
+                service.fallback = snapshot(credits: [ResetCredit(id: credit.id, expiresAt: expiry.addingTimeInterval(30))])
+            }
+            try engine.tick(active: true)
+            check(service.calls.count == 1 && !noOpIsVisible(),
+                  "\(scenario) credit does not revive a historical no-op warning")
+        }
 
         let lease = try ResetLease(url: root.appendingPathComponent("worker.lock"))
         do { _ = try ResetLease(url: root.appendingPathComponent("worker.lock")); check(false, "second worker lock") }

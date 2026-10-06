@@ -3,7 +3,7 @@
   "id": "codex-usage-menubar",
   "title": "Codex Usage Menu Bar",
   "kind": "desktop-application",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "platforms": [
     "macOS"
   ],
@@ -28,7 +28,7 @@
   "runtime": {
     "usesModelTurns": false,
     "autoUseBeforeExpirySeconds": 1200,
-    "maximumRemainingPercentForEligibility": 10,
+    "usagePercentagesAffectEligibility": false,
     "expiryReminderSeconds": [
       3600,
       1200,

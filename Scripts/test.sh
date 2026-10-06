@@ -37,6 +37,9 @@ xcrun swiftc -swift-version 5 -O \
 xcrun swiftc -swift-version 5 -O \
     "$ROOT/Sources/CodexUsage/UsageModels.swift" \
     "$ROOT/Sources/CodexUsage/ResetEngine.swift" \
+    "$ROOT/Sources/CodexUsage/ResetAutomation.swift" \
+    "$ROOT/Sources/CodexUsage/CodexClient.swift" \
+    "$ROOT/Sources/CodexUsage/MenuPresentation.swift" \
     "$ROOT/Tests/ResetEngineTests.swift" -o "$TEST_ROOT/reset-engine-tests"
 "$TEST_ROOT/reset-engine-tests"
 

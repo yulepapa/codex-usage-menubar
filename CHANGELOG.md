@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.5 — 2026-10-06
+
+- Keep the service's nothingToReset warning visible across worker ticks and restarts during the same valid credit's three-minute retry delay.
+- Replace the obsolete 10% eligibility threshold in the project manifest with an explicit usage-independent policy.
+- Test the menu after 60/120/179 seconds, retry at 180 seconds, stale credit outcomes and manifest/version consistency.
+
 ## 1.1.4 — 2026-10-06
 
 - Attempt automatic use in the final 20 minutes regardless of remaining usage; remove the app's 10% threshold.

@@ -200,6 +200,11 @@ final class ResetEngine {
                     let prior = state.attempts[credit.id]
                     let key = prior?.outcome == "pending" ? prior!.key : UUID().uuidString
                     if let prior, clock().timeIntervalSince(prior.attemptedAt) < 180 {
+                        // Each tick starts in checking. Keep the service's known
+                        // no-op visible while this verified credit awaits retry.
+                        if prior.outcome == "nothingToReset", prior.expiresAt == current.expiresAt {
+                            state.phase = "nothingToReset"
+                        }
                         try remind(credit, settings: settings, state: &state)
                         continue
                     }
