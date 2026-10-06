@@ -1,6 +1,6 @@
 import Foundation
 
-let appVersion = "1.1.3"
+let appVersion = "1.1.4"
 
 func localized(_ english: String, _ korean: String) -> String {
     let language = Locale.preferredLanguages.first?.lowercased() ?? "en"
@@ -37,9 +37,4 @@ struct UsagePayload: Codable {
     // Diagnostics remain sanitized; identifiers are internal to the worker.
     enum CodingKeys: String, CodingKey { case bucketLabel, windows, credits }
 
-    var eligibleForReset: Bool {
-        isCoreCodex && windows.contains {
-            [300, 10080].contains($0.windowDurationMins ?? -1) && $0.remainingPercent <= 10
-        }
-    }
 }

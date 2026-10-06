@@ -18,6 +18,9 @@ enum MenuPresentationTests {
         check(menu().title == localized("Reset credits: 2", "리셋권 2장"), "count stays primary")
         check(menu().expiry?.contains("1/1 10:00 GMT+9") == true, "compact expiry preserves Seoul zone and date")
         check(menu().warnings.isEmpty, "normal monitoring has no status narration")
+        state.phase = "nothingToReset"
+        check(menu().warnings.contains(localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")), "service no-op is explicit and never described as successful use")
+        state.phase = "monitoring"
         state.attempts["synthetic-private-credit"] = Redemption(key: "synthetic-private-key", expiresAt: now,
             attemptedAt: now.addingTimeInterval(-86400), outcome: "reset")
         check(menu().warnings.isEmpty, "old success is not a persistent warning")

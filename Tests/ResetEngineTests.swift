@@ -25,10 +25,13 @@ final class FakeResetService: ResetService {
     var calls: [(String, String)] = []
     var outcome = "reset"
     var failRead = false
+    var readCount = 0
+    var failReadAt: Int?
     var failConsume = false
     var beforeConsume: (() throws -> Void)?
     func read() throws -> UsagePayload {
-        if failRead { throw ResetStorageError.invalid }
+        readCount += 1
+        if failRead || readCount == failReadAt { throw ResetStorageError.invalid }
         return snapshots.isEmpty ? fallback : snapshots.removeFirst()
     }
     func consume(credit: ResetCredit, key: String) throws -> String {
@@ -80,6 +83,7 @@ final class FakeResetNotifier: ResetNotifier {
             try store.write("state.json", ResetEngineState())
             service.fallback = snapshot(); service.snapshots = []; service.calls = []; service.outcome = "reset"
             service.failRead = false; service.failConsume = false; service.beforeConsume = nil
+            service.readCount = 0; service.failReadAt = nil
             notifier.delivered = []; notifier.cleared = []; notifier.status = "authorized"
             return ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
         }
@@ -92,14 +96,16 @@ final class FakeResetNotifier: ResetNotifier {
         check(notifier.delivered == [3600], "repeated cycle does not duplicate reminder")
         now = expiry.addingTimeInterval(-1200)
         service.fallback = snapshot(primary: 1)
+        service.outcome = "nothingToReset"
         try engine.tick(active: true)
-        check(service.calls.isEmpty && notifier.delivered == [3600,1200], "small primary usage is not eligible but twenty minute reminder is sent")
+        check(service.calls.count == 1 && notifier.delivered == [3600,1200], "small usage still attempts and service no-op retains the twenty minute reminder")
         now = expiry.addingTimeInterval(-300)
         engine = ResetEngine(store: store, service: service, notifier: notifier, clock: { now })
         try engine.tick(active: true); try engine.tick(active: true)
         check(notifier.delivered == [3600,1200,300], "restart preserves all notification milestones")
         now = expiry.addingTimeInterval(-240)
         engine = try reset(); service.fallback = snapshot(primary: 0)
+        try store.updateSettings { $0.autoUse = false }
         try engine.tick(active: true)
         check(notifier.delivered == [300], "wake inside final five minutes sends only closest reminder")
         now = expiry
@@ -112,20 +118,20 @@ final class FakeResetNotifier: ResetNotifier {
             check(pending?.outcome == "pending" && pending?.key.isEmpty == false, "idempotency intent is durable before RPC")
         }
         try engine.tick(active: true)
-        check(service.calls.count == 1 && notifier.delivered.isEmpty, "weekly threshold qualifies even with zero primary usage; successful use suppresses reminder")
+        check(service.calls.count == 1 && notifier.delivered.isEmpty, "weekly-only low remaining attempts; successful use suppresses reminder")
         let used = try store.state()
         check(used.attempts[credit.id]?.outcome == "reset", "confirmed reset is recorded")
         try engine.tick(active: true)
         check(service.calls.count == 1, "repeated cycle cannot redeem a completed credit twice")
         engine = try reset(); service.fallback = snapshot(primary: 89, weekly: 89)
         try engine.tick(active: true)
-        check(service.calls.isEmpty, "eleven percent remaining is not eligible")
+        check(service.calls.count == 1, "eleven percent remaining no longer blocks a time-based attempt")
         engine = try reset(); service.fallback = snapshot(core: false)
         try engine.tick(active: true)
-        check(service.calls.isEmpty, "other metered buckets cannot authorize a core reset")
+        check(service.calls.count == 1, "valid credit controls the attempt independently of the displayed usage bucket")
         engine = try reset(); service.snapshots = [snapshot(), snapshot(primary: 0)]
         try engine.tick(active: true)
-        check(service.calls.isEmpty, "fresh eligibility supersedes earlier exhausted snapshot")
+        check(service.calls.count == 1, "replenished usage does not block the same freshly verified credit")
         engine = try reset(); service.snapshots = [snapshot(), snapshot(credits: [])]
         try engine.tick(active: true)
         check(service.calls.isEmpty && notifier.delivered.isEmpty, "manual use between reads suppresses both consumption and reminder")
@@ -213,19 +219,19 @@ final class FakeResetNotifier: ResetNotifier {
         now = expiry.addingTimeInterval(-1100)
         engine = try reset(); service.fallback = snapshot(credits: [credit, second]); service.failConsume = true
         try engine.tick(active: true)
-        service.failConsume = false; now = now.addingTimeInterval(181)
+        service.failConsume = true; now = now.addingTimeInterval(181)
         service.snapshots = [snapshot(credits: [credit, second]), snapshot(primary: 0, credits: [credit, second])]
         try engine.tick(active: true)
-        check(service.calls.count == 1 && tryState(store).lastError == "resultUnknown",
-              "fresh ineligibility preserves pending work and blocks another credit")
+        check(service.calls.count == 2 && service.calls[0].1 == service.calls[1].1 && tryState(store).lastError == "resultUnknown",
+              "replenished usage retries only the same pending key and never a second credit")
         let shifted = ResetCredit(id: credit.id, expiresAt: expiry.addingTimeInterval(30))
         service.fallback = snapshot(credits: [shifted, second])
         try engine.tick(active: true)
-        check(service.calls.count == 1 && tryState(store).attempts[credit.id]?.expiresAt == expiry,
+        check(service.calls.count == 2 && tryState(store).attempts[credit.id]?.expiresAt == expiry,
               "changed expiry cannot replace a pending intent or authorize another credit")
         service.failRead = true
         try engine.tick(active: true)
-        check(service.calls.count == 1 && tryState(store).attempts[credit.id]?.outcome == "pending",
+        check(service.calls.count == 2 && tryState(store).attempts[credit.id]?.outcome == "pending",
               "read timeout cannot discard pending work or consume another credit")
 
         now = expiry.addingTimeInterval(-1100)
@@ -316,6 +322,50 @@ final class FakeResetNotifier: ResetNotifier {
         try engine.tick(active: true)
         check(service.calls.isEmpty && notifier.delivered.count == deliveredAfterRead,
               "disabled reminder setting remains respected during the pending hold")
+
+        for remaining in [0, 8, 30, 100] {
+            for seconds in [1201, 1200, 1199, 1, 0, -1] {
+                now = expiry.addingTimeInterval(-Double(seconds))
+                engine = try reset()
+                service.fallback = snapshot(primary: 100 - remaining, weekly: 100 - remaining)
+                try engine.tick(active: true)
+                let expected = seconds > 0 && seconds <= 1200 ? 1 : 0
+                check(service.calls.count == expected, "remaining \(remaining)% / expiry \(seconds)s obeys only the time boundary")
+                try engine.tick(active: true)
+                check(service.calls.count == expected, "same credit is not repeated at remaining \(remaining)% / expiry \(seconds)s")
+            }
+        }
+        now = expiry.addingTimeInterval(-1200)
+        for (primary, weekly) in [(92, 70), (70, 92), (0, 0)] {
+            engine = try reset(); service.fallback = snapshot(primary: primary, weekly: weekly)
+            try engine.tick(active: true)
+            check(service.calls.count == 1, "mixed usage \(primary)/\(weekly) never gates a valid due credit")
+        }
+        engine = try reset()
+        service.fallback = UsagePayload(bucketLabel: nil, windows: [], credits: snapshot().credits, resetCredits: [credit])
+        try engine.tick(active: true)
+        check(service.calls.count == 1, "missing usage windows do not block verified credit and expiry")
+        engine = try reset(); service.failReadAt = 2
+        try engine.tick(active: true)
+        check(service.calls.isEmpty && tryState(store).lastError == "queryFailed", "pre-consume fresh read failure blocks dispatch")
+        for count: Int? in [0, nil] {
+            engine = try reset()
+            service.fallback = UsagePayload(bucketLabel: nil, windows: [], credits: CreditInfo(availableCount: count, earliestExpiresAt: nil), resetCredits: [credit])
+            try engine.tick(active: true)
+            check(service.calls.isEmpty, "missing or zero authoritative count cannot authorize consumption")
+        }
+        engine = try reset()
+        service.snapshots = [snapshot(), snapshot(credits: [ResetCredit(id: credit.id, expiresAt: expiry.addingTimeInterval(30))])]
+        try engine.tick(active: true)
+        check(service.calls.isEmpty, "changed fresh expiry cannot authorize an initial attempt")
+        engine = try reset(); service.outcome = "unexpected"
+        try engine.tick(active: true); try engine.tick(active: true)
+        check(service.calls.count == 1 && tryState(store).lastError == "resultUnknown", "unknown server outcome holds further consumption")
+        engine = try reset(); service.outcome = "nothingToReset"; service.fallback = snapshot(primary: 0, weekly: 0)
+        try engine.tick(active: true)
+        check(tryState(store).phase == "nothingToReset" && tryState(store).attempts[credit.id]?.outcome == "nothingToReset", "100% remaining can receive a service no-op without pretending success")
+        now = now.addingTimeInterval(179); try engine.tick(active: true)
+        check(service.calls.count == 1, "known service no-op respects the retry delay")
 
         let lease = try ResetLease(url: root.appendingPathComponent("worker.lock"))
         do { _ = try ResetLease(url: root.appendingPathComponent("worker.lock")); check(false, "second worker lock") }

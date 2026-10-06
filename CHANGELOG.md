@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.1.4 — 2026-10-06
+
+- Attempt automatic use in the final 20 minutes regardless of remaining usage; remove the app's 10% threshold.
+- Keep fresh credit verification, ownership, durable idempotency, pending-result holds and cooldowns.
+- Show the service's nothingToReset result without claiming a successful reset; preserve the existing menu layout.
+- Cover time boundaries, 0/8/30/100% remaining, missing usage windows, query failures and uncertain-result recovery with mock tests.
 
 - Install the menu and its bundled background worker in one command, with automatic use initially off and expiry reminders on.
 - Preserve existing choices and pending keys during updates; automatically hand off one recognized legacy user service without overlapping consumers.

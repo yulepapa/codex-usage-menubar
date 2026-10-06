@@ -119,7 +119,7 @@ enum NativeResetSection {
                     if try store.settings().autoUse {
                         let planned = next.expiresAt.addingTimeInterval(-1200)
                         rows.append(planned > now ? localized("Planned attempt: ", "자동 사용 시도: ") + ResetSection.formatDate(planned)
-                            : localized("Awaiting eligible usage or result", "사용 조건 또는 처리 결과 확인 중"))
+                            : localized("Checking credit or reset result", "리셋권 또는 처리 결과 확인 중"))
                     }
                 }
             } else { rows.append(localized("Credits: unknown", "보유: 확인 불가")) }
@@ -128,7 +128,7 @@ enum NativeResetSection {
                 switch last.outcome {
                 case "reset", "alreadyRedeemed": result = localized("Used", "사용 완료")
                 case "noCredit": result = localized("No credit", "사용할 권 없음")
-                case "nothingToReset": result = localized("Waiting for eligibility", "사용 조건 대기")
+                case "nothingToReset": result = localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")
                 default: result = localized("Result unconfirmed", "결과 미확인")
                 }
                 rows.append(localized("Last result: ", "최근 결과: ") + result + " · " + ResetSection.formatDate(last.attemptedAt))
@@ -141,7 +141,7 @@ enum NativeResetSection {
                 rows.append(localized("Notifications need permission or delivery check", "알림 권한 또는 전달 상태 확인 필요"))
             }
             rows.append(localized("Alerts: 1 hr, 20 min, 5 min before expiry", "만료 알림: 1시간 · 20분 · 5분 전"))
-            rows.append(localized("Mac must be awake · remaining usage ≤10%", "Mac이 깨어 있어야 함 · 잔여 사용량 10% 이하"))
+            rows.append(localized("Mac must be awake · attempts in final 20 min", "Mac이 깨어 있어야 함 · 만료 20분 이내 시도"))
             return rows
         } catch { return [localized("Reset settings/state unreadable; auto-use is blocked", "설정·상태 읽기 실패 · 자동 사용 차단")] }
     }

@@ -31,6 +31,8 @@ struct ResetMenuPresentation {
             value.warnings.append(localized("Reset result unconfirmed · further use paused", "소비 결과 확인 필요 · 추가 사용 보류"))
         } else if state.lastError == "refreshFailed" {
             value.warnings.append(localized("Latest reset result needs refresh", "최근 처리 결과 재확인 필요"))
+        } else if state.phase == "nothingToReset" {
+            value.warnings.append(localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음"))
         }
         if settings.reminders {
             switch state.notificationStatus {
