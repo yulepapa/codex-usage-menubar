@@ -105,44 +105,46 @@ enum NativeResetSection {
     }
     static func rows(store: ResetStore, now: Date) -> [String] {
         do {
-            let state = try store.state()
-            let active = try store.active()
-            var rows: [String] = []
-            if !active { rows.append(localized("Worker: staged, awaiting handoff", "실행기: 인계 대기")) }
-            else if state.workerSeenAt.map({ now.timeIntervalSince($0) <= 180 }) != true {
-                rows.append(localized("Worker: no recent check", "실행기: 최근 확인 없음"))
-            } else { rows.append(localized("Worker: background monitoring", "실행기: 백그라운드 감시 중")) }
-            if let count = state.availableCount, state.checkedAt.map({ now.timeIntervalSince($0) <= 180 }) == true, state.lastError != "queryFailed" {
-                rows.append(localized("Available credits: \(count)", "보유 리셋권: \(count)장"))
-                if let next = state.inventory.filter({ $0.expiresAt > now }).min(by: { $0.expiresAt < $1.expiresAt }) {
-                    rows.append(localized("Expiry: ", "만료: ") + ResetSection.formatDate(next.expiresAt))
-                    if try store.settings().autoUse {
-                        let planned = next.expiresAt.addingTimeInterval(-1200)
-                        rows.append(planned > now ? localized("Planned attempt: ", "자동 사용 시도: ") + ResetSection.formatDate(planned)
-                            : localized("Checking credit or reset result", "리셋권 또는 처리 결과 확인 중"))
-                    }
-                }
-            } else { rows.append(localized("Credits: unknown", "보유: 확인 불가")) }
-            if let last = state.attempts.values.max(by: { $0.attemptedAt < $1.attemptedAt }) {
-                let result: String
-                switch last.outcome {
-                case "reset", "alreadyRedeemed": result = localized("Used", "사용 완료")
-                case "noCredit": result = localized("No credit", "사용할 권 없음")
-                case "nothingToReset": result = localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")
-                default: result = localized("Result unconfirmed", "결과 미확인")
-                }
-                rows.append(localized("Last result: ", "최근 결과: ") + result + " · " + ResetSection.formatDate(last.attemptedAt))
-            }
-            if let error = state.lastError {
-                rows.append(error == "resultUnknown" ? localized("Automatic use paused pending verification", "소비 결과 확인 필요 · 추가 사용 보류")
-                            : localized("Latest account check failed", "최근 계정 조회 실패"))
-            }
-            if ["denied", "notDetermined", "deliveryFailed", "unknown"].contains(state.notificationStatus) {
-                rows.append(localized("Notifications need permission or delivery check", "알림 권한 또는 전달 상태 확인 필요"))
-            }
-            rows.append(localized("Alerts: 1 hr, 20 min, 5 min before expiry", "만료 알림: 1시간 · 20분 · 5분 전"))
-            rows.append(localized("Mac must be awake · attempts in final 20 min", "Mac이 깨어 있어야 함 · 만료 20분 이내 시도"))
-            return rows
+            return rows(state: try store.state(), settings: try store.settings(), active: try store.active(), now: now)
         } catch { return [localized("Reset settings/state unreadable; auto-use is blocked", "설정·상태 읽기 실패 · 자동 사용 차단")] }
+    }
+
+    static func rows(state: ResetEngineState, settings: ResetSettings, active: Bool, now: Date) -> [String] {
+        var rows: [String] = []
+        if !active { rows.append(localized("Worker: staged, awaiting handoff", "실행기: 인계 대기")) }
+        else if state.workerSeenAt.map({ now.timeIntervalSince($0) <= 180 }) != true {
+            rows.append(localized("Worker: no recent check", "실행기: 최근 확인 없음"))
+        } else { rows.append(localized("Worker: background monitoring", "실행기: 백그라운드 감시 중")) }
+        if let count = state.availableCount, state.checkedAt.map({ now.timeIntervalSince($0) <= 180 }) == true, state.lastError != "queryFailed" {
+            rows.append(localized("Available credits: \(count)", "보유 리셋권: \(count)장"))
+            if let next = state.inventory.filter({ $0.expiresAt > now }).min(by: { $0.expiresAt < $1.expiresAt }) {
+                rows.append(localized("Expiry: ", "만료: ") + ResetSection.formatDate(next.expiresAt))
+                if settings.autoUse {
+                    let planned = next.expiresAt.addingTimeInterval(-1200)
+                    rows.append(planned > now ? localized("Planned attempt: ", "자동 사용 시도: ") + ResetSection.formatDate(planned)
+                        : localized("Checking credit or reset result", "리셋권 또는 처리 결과 확인 중"))
+                }
+            }
+        } else { rows.append(localized("Credits: unknown", "보유: 확인 불가")) }
+        if let last = state.attempts.values.max(by: { $0.attemptedAt < $1.attemptedAt }) {
+            let result: String
+            switch last.outcome {
+            case "reset", "alreadyRedeemed": result = localized("Used", "사용 완료")
+            case "noCredit": result = localized("No credit", "사용할 권 없음")
+            case "nothingToReset": result = localized("Service: no eligible usage to reset", "서버에 초기화할 사용량 없음")
+            default: result = localized("Result unconfirmed", "결과 미확인")
+            }
+            rows.append(localized("Last result: ", "최근 결과: ") + result + " · " + ResetSection.formatDate(last.attemptedAt))
+        }
+        if let error = state.lastError {
+            rows.append(error == "resultUnknown" ? localized("Automatic use paused pending verification", "소비 결과 확인 필요 · 추가 사용 보류")
+                        : localized("Latest account check failed", "최근 계정 조회 실패"))
+        }
+        if ["denied", "notDetermined", "deliveryFailed", "unknown"].contains(state.notificationStatus) {
+            rows.append(localized("Notifications need permission or delivery check", "알림 권한 또는 전달 상태 확인 필요"))
+        }
+        rows.append(localized("Alerts: 1 hr, 20 min, 5 min before expiry", "만료 알림: 1시간 · 20분 · 5분 전"))
+        rows.append(localized("Mac must be awake · attempts in final 20 min", "Mac이 깨어 있어야 함 · 만료 20분 이내 시도"))
+        return rows
     }
 }

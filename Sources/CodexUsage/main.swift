@@ -22,11 +22,14 @@ final class UsageFetcher {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopoverDelegate {
     private let fetcher = UsageFetcher()
     private let menu = NSMenu()
     private var statusItem: NSStatusItem!
     private var timer: Timer?
+    private var popoverTimer: Timer?
+    private let popover = NSPopover()
+    private var popoverController: UsagePopoverController?
     private var latestSnapshot: UsagePayload?
     private var lastUpdated: Date?
     private var lastError: String?
@@ -70,7 +73,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.toolTip = localized("Codex remaining usage", "Codex 남은 사용량")
         statusItem.button?.setAccessibilityLabel(localized("Codex remaining usage", "Codex 남은 사용량"))
         statusItem.button?.setAccessibilityValue(localized("Checking usage", "사용량 확인 중"))
-        statusItem.menu = menu
+        // The status button's image, font, title and accessibility formatting stay unchanged.
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(togglePopover)
+        popover.behavior = .transient
+        popover.delegate = self
+        popover.contentSize = UsagePopoverView.size
+        PopoverFonts.register()
 
         if previewDirectory == nil && (try? ResetStore.standard.settings().reminders) == true
             && FileManager.default.fileExists(atPath: ResetStore.standard.directory.path) {
@@ -96,16 +105,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        popoverTimer?.invalidate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
+    @objc private func togglePopover() {
+        if popover.isShown { popover.performClose(nil); return }
+        guard let button = statusItem.button else { return }
         readWatcher()
         rebuildMenu()
-        if lastUpdated.map({ Date().timeIntervalSince($0) > 90 }) ?? true {
-            refreshUsage()
+        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+        if lastUpdated.map({ displayDate.timeIntervalSince($0) > 90 }) ?? true { refreshUsage() }
+        let tick = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
+            self?.readWatcher(); self?.rebuildMenu()
         }
+        popoverTimer = tick
+        RunLoop.main.add(tick, forMode: .common)
     }
+
+    func popoverDidClose(_ notification: Notification) {
+        popoverTimer?.invalidate(); popoverTimer = nil
+    }
+
+    func menuWillOpen(_ menu: NSMenu) { readWatcher(); rebuildMenu() }
 
     @objc private func workspaceDidWake() {
         if previewDirectory == nil && FileManager.default.fileExists(atPath: ResetStore.standard.directory.appendingPathComponent("ownership.json").path) {
@@ -231,9 +256,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } ?? false)
         let native = previewDirectory == nil && FileManager.default.fileExists(atPath:
             ResetStore.standard.directory.appendingPathComponent("ownership.json").path)
+        // One captured reset state drives counts, warnings, controls and detail rows.
+        // The worker may atomically publish another state while this view is rebuilt.
+        let nativeState = native ? try? ResetStore.standard.state() : nil
+        let nativeSettings = native ? try? ResetStore.standard.settings() : nil
+        let nativeActive = native ? try? ResetStore.standard.active() : nil
         let reset: ResetMenuPresentation
-        if native {
-            reset = NativeResetSection.compact(store: .standard, now: displayDate)
+        if native, let state = nativeState, let settings = nativeSettings, let active = nativeActive {
+            reset = ResetMenuPresentation.native(state: state, settings: settings, active: active, now: displayDate)
+        } else if native {
+            reset = ResetMenuPresentation(title: localized("Reset credits: unknown", "리셋권 확인 필요"),
+                warnings: [localized("Reset state unreadable · auto-use blocked", "설정·상태 확인 필요 · 자동 사용 차단")])
         } else {
             reset = ResetMenuPresentation.legacy(credits: creditsAreFresh ? latestSnapshot?.credits : nil,
                                                 watcher: watcher, now: displayDate)
@@ -242,15 +275,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let expiry = reset.expiry { addInfoItem(expiry) }
 
         if native {
-            let settings = try? ResetStore.standard.settings()
-            let canEdit = (try? ResetStore.standard.active()) == true
+            let settings = nativeSettings
+            let canEdit = nativeActive == true && nativeState != nil && settings != nil
             addToggle(settings?.autoUse == true ? localized("Auto-use: On", "자동 사용 켜짐")
                 : localized("Auto-use: Off", "자동 사용 꺼짐"), checked: settings?.autoUse == true,
                 action: #selector(toggleAutoUse), enabled: canEdit)
             addToggle(localized("Expiry notifications", "만료 전 Mac 알림"), checked: settings?.reminders == true,
                 action: #selector(toggleReminders), enabled: canEdit, to: details)
             details.addItem(.separator())
-            for row in NativeResetSection.rows(store: .standard, now: displayDate) { addInfoItem(row, to: details) }
+            if let state = nativeState, let settings = nativeSettings, let active = nativeActive {
+                for row in NativeResetSection.rows(state: state, settings: settings, active: active, now: displayDate) { addInfoItem(row, to: details) }
+            } else { addInfoItem(localized("Reset settings/state unreadable; auto-use is blocked", "설정·상태 읽기 실패 · 자동 사용 차단"), to: details) }
         } else {
             addInfoItem(watcher.isPresent ? localized("Auto-use: existing watcher", "자동 사용: 기존 감시기")
                 : localized("Auto-use: not configured", "자동 사용: 미설정"))
@@ -292,6 +327,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         quitItem.keyEquivalentModifierMask = [.command]
         menu.addItem(quitItem)
 
+        updatePopover(reset: reset, native: native, creditsAreFresh: creditsAreFresh, details: details, warnings: warnings,
+                      state: nativeState, settings: nativeSettings, active: nativeActive == true)
+
         let args = CommandLine.arguments
         if let index = args.firstIndex(of: "--export-menu-state"), args.indices.contains(index + 1) {
             let payload: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
@@ -299,6 +337,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
                 try? data.write(to: URL(fileURLWithPath: args[index + 1]), options: .atomic)
             }
+        }
+    }
+
+    private func updatePopover(reset: ResetMenuPresentation, native: Bool, creditsAreFresh: Bool,
+                               details: NSMenu, warnings: [String], state: ResetEngineState?,
+                               settings: ResetSettings?, active: Bool) {
+        var presentation = reset
+        presentation.warnings = warnings
+        var model = PopoverPresentation(snapshot: latestSnapshot, checkedAt: lastUpdated, now: displayDate,
+            refreshing: isRefreshing, usageFailed: lastError != nil, reset: presentation,
+            state: state, settings: settings, active: active, native: native,
+            legacyCredits: creditsAreFresh ? latestSnapshot?.credits : nil,
+            details: details.items.filter { !$0.isSeparatorItem }.map(\.title))
+        model.fixture = previewDirectory != nil
+        if let controller = popoverController { controller.canvas.model = model }
+        else {
+            let controller = UsagePopoverController(model: model)
+            controller.canvas.onClose = { [weak self] in self?.popover.performClose(nil) }
+            controller.canvas.onRefresh = { [weak self] in self?.refreshUsage() }
+            controller.canvas.onAutoUse = { [weak self] in self?.toggleAutoUse() }
+            controller.canvas.onReminders = { [weak self] in self?.toggleReminders() }
+            controller.canvas.onQuit = { [weak self] in self?.quitApp() }
+            popoverController = controller
+            popover.contentViewController = controller
         }
     }
 
@@ -318,6 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleAutoUse() {
+        guard previewDirectory == nil, (try? ResetStore.standard.active()) == true else { return }
         do {
             try ResetStore.standard.updateSettings { $0.autoUse.toggle() }
             try ResetStore.standard.write("wake.json", ["at": Date().timeIntervalSince1970])
@@ -328,6 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleReminders() {
+        guard previewDirectory == nil, (try? ResetStore.standard.active()) == true else { return }
         do {
             try ResetStore.standard.updateSettings { $0.reminders.toggle() }
             try ResetStore.standard.write("wake.json", ["at": Date().timeIntervalSince1970])
@@ -511,6 +575,16 @@ private func runCommandLineMode(_ arguments: [String]) -> Int32? {
     }
 
     return nil
+}
+
+if let index = CommandLine.arguments.firstIndex(of: "--export-popover-fixtures") {
+    guard CommandLine.arguments.indices.contains(index + 1) else {
+        writeStandardError("--export-popover-fixtures requires an output directory"); exit(EXIT_FAILURE)
+    }
+    do {
+        try PopoverDiagnostics.export(to: URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true))
+        exit(EXIT_SUCCESS)
+    } catch { writeStandardError("Popover fixture export failed: \(error)"); exit(EXIT_FAILURE) }
 }
 
 if let exitCode = runCommandLineMode(Array(CommandLine.arguments.dropFirst())) {

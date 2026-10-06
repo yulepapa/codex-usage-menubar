@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 — 2026-10-06
+
+- Replace the open menu with the approved 660 × 414 native AppKit popover, retaining the closed status-bar icon, default font and numeric format.
+- Bundle Paperlogy and Pretendard under OFL; draw live usage gauges, expanding credit ticket and animated auto-use switch.
+- Show response-driven single/two-window usage, Seoul reset/expiry times, unknown or failed data and durable reset outcomes without implying consumption success.
+- Connect refresh, auto-use and reminder controls to existing settings and wake hooks, with keyboard navigation, Escape, accessible buttons and Reduce Motion support.
+- Retain the diagnostic menu export and add a strictly synthetic popover render/lifecycle export. Consumption, worker, ledger and pending protection are unchanged.
+
 ## 1.1.5 — 2026-10-06
 
 - Keep the service's nothingToReset warning visible across worker ticks and restarts during the same valid credit's three-minute retry delay.

@@ -2,7 +2,7 @@
 
 **Codex 사용량과 리셋권을 Mac 메뉴바에서 확인하고, 조건이 맞으면 리셋권을 자동으로 사용하는 앱입니다.**
 
-macOS 13 이상 · 현재 버전 **1.1.5**
+macOS 13 이상 · 현재 버전 **1.2.0**
 
 ## 처음 설치
 
@@ -42,3 +42,5 @@ git clone https://github.com/yulepapa/codex-usage-menubar.git && cd codex-usage-
 [설치·표시 문제 해결](Docs/ADVANCED.md#빠른-문제-해결) · [자동 사용의 자세한 동작](Docs/ADVANCED.md#자동-사용과-알림의-동작) · [설정·복구·개발 안내](Docs/ADVANCED.md)
 
 [MIT 라이선스](LICENSE)로 제공됩니다. OpenAI의 공식 제품은 아니며 Codex/OpenAI 상표는 각 소유자에게 속합니다.
+
+앱에 포함된 Paperlogy·Pretendard 서체는 각각 [Paperlogy OFL](Resources/Fonts/Paperlogy-OFL.txt), [Pretendard OFL](Resources/Fonts/Pretendard-OFL.txt)의 SIL Open Font License 1.1을 따릅니다. 서체는 앱 안에서만 등록하며 시스템에 설치하지 않습니다.
