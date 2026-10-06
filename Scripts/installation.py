@@ -187,7 +187,10 @@ class Mac:
         if text is None:
             return False
         fields = dict(re.findall(r'^\s*(path|program) = (.+)$', text, re.M))
-        if fields.get('path') != str(path) or fields.get('program') != arguments[0]:
+        block = re.search(r'^\s*arguments = \{\n(.*?)^\s*\}', text, re.M | re.S)
+        actual = [line.strip() for line in block.group(1).splitlines()] if block else None
+        if (fields.get('path') != str(path) or fields.get('program') != arguments[0]
+                or actual != arguments):
             raise InstallError('An existing service has an unexpected identity; it was left running')
         return True
 
@@ -240,7 +243,7 @@ class Mac:
         while time.monotonic() < end:
             state = read(reset / 'state.json', {})
             worker = self.job(plan['workerLabel'])
-            menu = self.job(MENU)
+            menu = self.job(plan['menuLabel'])
             if (worker and menu and re.search(r'\bpid = \d+', worker) and re.search(r'\bpid = \d+', menu)
                     and state.get('workerSeenAt', 0) >= since - REFERENCE):
                 return
@@ -289,13 +292,9 @@ class Installer:
         worker = read(self.reset / 'worker.json')
         manifest = read(self.support / 'installation.json', {})
         menu_path = self.agents / (MENU + '.plist')
-        menu = self.agent(menu_path) if menu_path.exists() else None
-        if menu and (menu['Label'] != MENU or len(menu['ProgramArguments']) != 1):
-            raise InstallError('Unexpected menu login service; preserving it')
+        menu_label = MENU
         app = self.app_path(self.home / 'Applications/CodexUsage.app')
-        if menu:
-            app = self.app_path(Path(menu['ProgramArguments'][0]).parent.parent.parent)
-        native_agents, legacy_agents = [], []
+        native_agents, legacy_agents, menu_agents = [], [], []
         for path in self.agents.glob('*.plist'):
             # Unrelated plists are neither changed nor logged.
             try:
@@ -306,6 +305,10 @@ class Installer:
                 continue  # Unrelated malformed files cannot be loaded by launchd.
             if not isinstance(raw, dict):
                 continue
+            program = raw.get('Program', '')
+            if isinstance(program, str) and ('CodexUsage.app/Contents/MacOS/CodexUsage' in program
+                                             or Path(program).name == 'reset_credit_watcher.py'):
+                raise InstallError('An unsupported Program-based app or watcher service exists; preserve it for inspection')
             args = raw.get('ProgramArguments', [])
             if not isinstance(args, list):
                 continue
@@ -313,6 +316,25 @@ class Installer:
                 native_agents.append(path)
             if any(Path(str(a)).name == 'reset_credit_watcher.py' for a in args):
                 legacy_agents.append(path)
+            if ('--reset-worker' not in args and any(
+                    'CodexUsage.app' in str(a) for a in args)) or path == menu_path:
+                menu_agents.append(path)
+        if len(menu_agents) > 1:
+            raise InstallError('Multiple menu login services found; no service was replaced')
+        menu = None
+        if menu_agents:
+            menu_path = menu_agents[0]
+            menu = self.agent(menu_path)
+            menu_label = menu['Label']
+            args = menu['ProgramArguments']
+            if len(args) == 1:
+                app = self.app_path(Path(args[0]).parent.parent.parent)
+                if args != [str(app / 'Contents/MacOS/CodexUsage')]:
+                    raise InstallError('Unexpected menu executable')
+            elif len(args) == 3 and args[:2] == ['/usr/bin/open', '-g']:
+                app = self.app_path(args[2])
+            else:
+                raise InstallError('Unsupported menu login service; preserving it')
         if len(native_agents) > 1 or len(legacy_agents) > 1 or (native_agents and legacy_agents):
             raise InstallError('Multiple reset services found; no service was replaced')
         legacy = None
@@ -325,7 +347,7 @@ class Installer:
             if worker['executable'] != str(app / 'Contents/MacOS/CodexUsage'):
                 raise InstallError('Worker executable does not match the installed app')
             label, worker_path = worker['label'], Path(worker['launchAgent'])
-            if worker_path.parent != self.agents or not re.fullmatch(r'[A-Za-z0-9_.-]+', label) or label == MENU:
+            if worker_path.parent != self.agents or not re.fullmatch(r'[A-Za-z0-9_.-]+', label) or label == menu_label:
                 raise InstallError('Worker service identity is invalid')
             if legacy_agents or any(p != worker_path for p in native_agents):
                 raise InstallError('A second reset service is configured')
@@ -361,11 +383,11 @@ class Installer:
             base = Path(self.env.get('CODEX_HOME', str(self.home / '.codex'))) / 'automations/codex'
             if (base / 'reset_credit_watcher.py').exists() or (base / 'reset_credit_watcher_state.json').exists():
                 raise InstallError('Legacy watcher files have no matching login service; inspect them before installing')
-        if label == MENU or (worker_path.exists() and worker_agent is None):
+        if label == menu_label or (worker_path.exists() and worker_agent is None):
             raise InstallError('The target background service belongs to another configuration')
         safe(worker_path)
         binary = app / 'Contents/MacOS/CodexUsage'
-        if menu and menu['ProgramArguments'] != [str(binary)]:
+        if menu and menu['ProgramArguments'] not in ([str(binary)], ['/usr/bin/open', '-g', str(app)]):
             raise InstallError('Menu and worker point to different installed apps')
         processes = self.os.processes()
         for _, args in processes:
@@ -382,7 +404,7 @@ class Installer:
                 old.append(dict(path=str(path), label=definition['Label'], loaded=loaded))
         if worker_agent is None and self.os.job(label) is not None:
             raise InstallError('An unrecognized background service is loaded')
-        if menu is None and self.os.job(MENU) is not None:
+        if menu is None and self.os.job(menu_label) is not None:
             raise InstallError('An unrecognized menu service is loaded')
         if legacy and not any(x['label'] == label and x['loaded'] for x in old):
             raise InstallError('The selected legacy watcher is not registered as running')
@@ -402,10 +424,10 @@ class Installer:
             raise InstallError('Service environment contains authentication settings; no credentials were copied')
         previous = {k: v for k, v in previous.items() if k in
                     ('CODEX_PATH', 'CODEX_HOME', 'CODEX_USAGE_REFRESH_SECONDS', 'PATH', 'LANG', 'LC_ALL', 'LC_CTYPE')}
-        return dict(app=str(app), binary=str(binary), menuPath=str(menu_path), workerPath=str(worker_path),
+        return dict(app=str(app), binary=str(binary), menuPath=str(menu_path), menuLabel=menu_label, workerPath=str(worker_path),
                     workerLabel=label, legacy=str(legacy) if legacy else None, oldJobs=old,
                     native=worker is not None,
-                    standaloneMenu=not menu and any((a == str(binary) or a.startswith(str(binary) + ' '))
+                    standaloneMenu=not any(x['label'] == menu_label and x['loaded'] for x in old) and any((a == str(binary) or a.startswith(str(binary) + ' '))
                                                    and '--reset-worker' not in a for _, a in processes),
                     previousEnvironment=previous)
 
@@ -446,7 +468,7 @@ class Installer:
         return env
 
     def snapshot(self, plan, action):
-        backup = self.support / 'install-backups' / uuid.uuid4().hex
+        backup = safe(self.support / 'install-backups' / uuid.uuid4().hex)
         backup.mkdir(parents=True, mode=0o700)
         app = Path(plan['app'])
         if app.exists():
@@ -469,7 +491,7 @@ class Installer:
         return data
 
     def quiesce(self, plan):
-        for label in (plan['workerLabel'], MENU):
+        for label in (plan['workerLabel'], plan.get('menuLabel', MENU)):
             self.os.stop(label)
         self.os.stop_apps(Path(plan['binary']))
         if any('reset_credit_watcher.py' in args for _, args in self.os.processes()):
@@ -527,7 +549,7 @@ class Installer:
             validate_settings(read(self.reset / 'settings.json'))
             validate_state(read(self.reset / 'state.json'))
             for key, label, arguments in (('workerPath', plan['workerLabel'], [plan['binary'], '--reset-worker']),
-                                          ('menuPath', MENU, [plan['binary']])):
+                                          ('menuPath', plan.get('menuLabel', MENU), [plan['binary']])):
                 path = Path(plan[key])
                 definition = self.agent(path)
                 if definition['Label'] != label or definition['ProgramArguments'] != arguments:
@@ -562,14 +584,16 @@ class Installer:
             if path.parent != self.agents or path.suffix != '.plist':
                 raise InstallError('Unexpected recovery service path')
             allowed.add(path)
-        if plan['menuPath'] != str(self.agents / (MENU + '.plist')) or not re.fullmatch(r'[A-Za-z0-9_.-]+', plan['workerLabel']):
+        menu_label = plan.get('menuLabel', MENU)
+        if (not re.fullmatch(r'[A-Za-z0-9_.-]+', menu_label) or menu_label == plan['workerLabel']
+                or not re.fullmatch(r'[A-Za-z0-9_.-]+', plan['workerLabel'])):
             raise InstallError('Unexpected recovery service identity')
         for record in data['files']:
             if Path(record['path']) not in allowed or not str(record['saved']).isdigit():
                 raise InstallError('Unexpected recovery file')
         for job in plan['oldJobs']:
-            expected = plan['menuPath'] if job['label'] == MENU else plan['workerPath']
-            if job['label'] not in (MENU, plan['workerLabel']) or job['path'] != expected or type(job['loaded']) is not bool:
+            expected = plan['menuPath'] if job['label'] == menu_label else plan['workerPath']
+            if job['label'] not in (menu_label, plan['workerLabel']) or job['path'] != expected or type(job['loaded']) is not bool:
                 raise InstallError('Unexpected recovery service')
         if plan['binary'] != str(Path(plan['app']) / 'Contents/MacOS/CodexUsage'):
             raise InstallError('Unexpected recovery executable')
@@ -626,12 +650,12 @@ class Installer:
                         if plan['legacy'] or state is None:
                             put(self.reset / 'state.json', state or empty_state())
                         put(self.reset / 'worker.json', {'label': plan['workerLabel'], 'executable': plan['binary'], 'launchAgent': plan['workerPath']})
-                        for label, path, args in ((MENU, plan['menuPath'], [plan['binary']]),
+                        for label, path, args in ((plan['menuLabel'], plan['menuPath'], [plan['binary']]),
                                                  (plan['workerLabel'], plan['workerPath'], [plan['binary'], '--reset-worker'])):
                             agent = dict(Label=label, ProgramArguments=args, EnvironmentVariables=env, Umask=0o077,
                                          RunAtLoad=True, LimitLoadToSessionType='Aqua', ThrottleInterval=10,
-                                         ProcessType='Interactive' if label == MENU else 'Background')
-                            if label != MENU:
+                                         ProcessType='Interactive' if label == plan['menuLabel'] else 'Background')
+                            if label != plan['menuLabel']:
                                 agent.update(KeepAlive=True, StandardOutPath=str(self.reset / 'worker.stdout.log'),
                                              StandardErrorPath=str(self.reset / 'worker.stderr.log'))
                             atomic(Path(path), plistlib.dumps(agent), 0o644)

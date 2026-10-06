@@ -96,7 +96,7 @@ class FakeMac:
 
     def health(self, plan, reset, since):
         assert m.read(reset / 'ownership.json')['active'] is False, 'Health check enabled consumption'
-        assert set(self.jobs) == {m.MENU, plan['workerLabel']}
+        assert set(self.jobs) == {plan['menuLabel'], plan['workerLabel']}
         if self.health_hook:
             self.health_hook(reset)
         if self.fail_health:
@@ -519,6 +519,56 @@ class InstallationTests(unittest.TestCase):
             self.install()
         self.assertEqual(self.mac.jobs[m.MENU]['definition']['ProgramArguments'], ['/example/unrelated'])
 
+    def test_backup_symlink_is_rejected_before_writing_outside_support(self):
+        self.make_prior_native()
+        backups = self.i.support / 'install-backups'
+        backups.rename(self.root / 'original-backups')
+        outside = self.root / 'outside'
+        outside.mkdir()
+        backups.symlink_to(outside)
+        events = list(self.mac.events)
+        with self.assertRaisesRegex(m.InstallError, 'symbolic'):
+            self.install()
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertEqual(self.mac.events, events)
+        self.assertEqual(self.marker(), 'old')
+
+    def test_program_only_legacy_job_is_rejected_even_when_idle(self):
+        self.make_prior_native()
+        path = self.i.agents / 'example.program-only.plist'
+        original = plistlib.dumps({'Label': 'example.program-only', 'Program': '/custom/reset_credit_watcher.py', 'StartInterval': 60})
+        path.write_bytes(original)
+        events = list(self.mac.events)
+        with self.assertRaisesRegex(m.InstallError, 'Program-based'):
+            self.install()
+        self.assertEqual(self.mac.events, events)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_existing_open_menu_service_is_updated_once_and_restored_on_failure(self):
+        self.make_prior_native(auto=True)
+        self.mac.stop(m.MENU)
+        (self.i.agents / (m.MENU + '.plist')).unlink()
+        path = self.i.agents / 'example.original-menu.plist'
+        original = plistlib.dumps({'Label': 'example.original-menu', 'ProgramArguments': ['/usr/bin/open', '-g', str(self.app)], 'RunAtLoad': True})
+        path.write_bytes(original)
+        self.mac.extra = [(777, str(self.app / 'Contents/MacOS/CodexUsage') + ' --export-menu-state /example/state')]
+        self.mac.fail_health = True
+        with self.assertRaisesRegex(m.InstallError, 'health'):
+            self.install()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertTrue(self.mac.extra)
+        self.assertEqual(self.marker(), 'old')
+        self.install()
+        self.assertEqual(set(self.mac.jobs), {m.WORKER, 'example.original-menu'})
+        self.assertFalse((self.i.agents / (m.MENU + '.plist')).exists())
+        self.assertEqual(plistlib.loads(path.read_bytes())['ProgramArguments'], [str(self.app / 'Contents/MacOS/CodexUsage')])
+        self.assertTrue(self.settings()['autoUse'])
+        self.assertEqual(self.state()['attempts']['credit']['key'], 'synthetic-existing-key')
+        self.install()
+        self.i.execute('uninstall')
+        self.assertFalse(path.exists())
+        self.assertFalse(self.mac.jobs)
+
     def test_worker_lock_blocks_replacement_and_recovery_waits_for_release(self):
         self.make_prior_native()
         with m.lease(self.i.reset / 'worker.lock'):
@@ -560,11 +610,18 @@ class InstallationTests(unittest.TestCase):
 class MacAdapterTests(unittest.TestCase):
     def test_launchctl_identity_supports_spaces_and_rejects_other_programs(self):
         platform = m.Mac()
-        text = 'service = {\n\tpath = /example/User Space/agent.plist\n\tprogram = /example/User Space/CodexUsage\n\tpid = 123\n}\n'
+        text = 'service = {\n\tpath = /example/User Space/agent.plist\n\tprogram = /example/User Space/CodexUsage\n\targuments = {\n\t\t/example/User Space/CodexUsage\n\t}\n\tpid = 123\n}\n'
         with patch.object(platform, 'run', return_value=SimpleNamespace(returncode=0, stdout=text)):
             self.assertTrue(platform.verify_job('example.worker', Path('/example/User Space/agent.plist'), ['/example/User Space/CodexUsage']))
             with self.assertRaisesRegex(m.InstallError, 'identity'):
                 platform.verify_job('example.worker', Path('/example/User Space/agent.plist'), ['/example/Other'])
+
+    def test_same_interpreter_with_different_arguments_is_not_the_selected_job(self):
+        platform = m.Mac()
+        text = 'service = {\n path = /example/agent.plist\n program = /example/Python\n arguments = {\n  /example/Python\n  /example/unrelated.py\n }\n}\n'
+        with patch.object(platform, 'run', return_value=SimpleNamespace(returncode=0, stdout=text)):
+            with self.assertRaisesRegex(m.InstallError, 'identity'):
+                platform.verify_job('example.worker', Path('/example/agent.plist'), ['/example/Python', '/example/reset_credit_watcher.py'])
 
     def test_only_absent_service_code_is_accepted_as_missing(self):
         platform = m.Mac()
