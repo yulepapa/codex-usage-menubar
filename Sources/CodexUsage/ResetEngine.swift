@@ -154,7 +154,7 @@ final class ResetEngine {
         if settings.reminders { state.notificationStatus = notifier.status }
 
         // A previous uncertain result must be reconciled with the same key.
-        // Missing credit/eligibility never becomes assumed success or a new use.
+        // Missing credits never become assumed success or a new use.
         let unresolved = state.attempts.filter { $0.value.outcome == "pending" }
         if !unresolved.isEmpty {
             state.phase = "needsReview"; state.lastError = "resultUnknown"
@@ -191,9 +191,12 @@ final class ResetEngine {
                     }
                     continue
                 }
-                if fresh.eligibleForReset,
-                   let current = fresh.resetCredits.first(where: { $0.id == credit.id && $0.expiresAt == credit.expiresAt }),
-                   current.expiresAt > clock(), try store.settings().autoUse, try store.active() {
+                // Usage percentages are display-only. The service decides whether
+                // a reset can be applied; never infer eligibility or success here.
+                if let current = fresh.resetCredits.first(where: { $0.id == credit.id && $0.expiresAt == credit.expiresAt }),
+                   (fresh.credits.availableCount ?? 0) > 0,
+                   current.expiresAt > clock(), current.expiresAt.timeIntervalSince(clock()) <= 1200,
+                   try store.settings().autoUse, try store.active() {
                     let prior = state.attempts[credit.id]
                     let key = prior?.outcome == "pending" ? prior!.key : UUID().uuidString
                     if let prior, clock().timeIntervalSince(prior.attemptedAt) < 180 {
@@ -230,7 +233,7 @@ final class ResetEngine {
                         try save(state)
                         return // At most one logical redemption in a cycle.
                     }
-                } else { state.phase = "waitingForEligibility" }
+                } else { state.phase = "waitingForCredit" }
             }
             try remind(credit, settings: settings, state: &state)
         }
