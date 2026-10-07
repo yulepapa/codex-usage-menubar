@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Usage 디자인 재현"
+  short_description: "Recreate and review the native Codex Usage menu design"
+  default_prompt: "Read the v1.2.3 design specification, then reproduce or review the requested Codex Usage mockup, video frame, or AppKit screen using synthetic data."

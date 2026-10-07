@@ -2,7 +2,7 @@
 
 **Codex 사용량과 리셋권을 Mac 메뉴바에서 확인하고, 조건이 맞으면 리셋권을 자동으로 사용하는 앱입니다.**
 
-macOS 13 이상 · 현재 버전 **1.1.5**
+macOS 13 이상 · 현재 버전 **1.2.3**
 
 ## 처음 설치
 
@@ -20,11 +20,13 @@ git clone https://github.com/yulepapa/codex-usage-menubar.git && cd codex-usage-
 2. **남은 사용량**을 확인합니다. `60%`라면 해당 기간에 쓸 수 있는 양이 60% 남았다는 뜻입니다.
 3. **상세**에서 사용량이 다시 채워지는 시각과 최근 처리 결과를 확인합니다.
 
-사용량은 기본 5분마다 갱신됩니다. 바로 확인하려면 **새로고침**을 누르세요.
+사용량은 기본 5분마다 갱신됩니다. 바로 확인하려면 팝오버 아래쪽의 **↻ 새로고침**을 누르세요.
 
 ## 리셋권과 만료 알림
 
 계정에 리셋권이 있으면 메뉴에서 보유 수와 만료 시각을 확인할 수 있습니다. 리셋권은 Codex 사용량을 초기화하는 권리입니다.
+
+개별 리셋권 정보가 제공되면 만료순으로 카드가 각각 표시됩니다. 가장 먼저 만료되는 권의 시각은 기본 카드에서 바로 보이고, 위쪽 카드 탭을 선택하면 다른 권의 만료 시각을 볼 수 있습니다. 6장까지는 모두 바로 선택할 수 있고, 더 많으면 카드 탭을 가로로 스크롤할 수 있습니다. 카드 선택은 실제 사용 명령이 아닙니다.
 
 설치하면 두 기능이 함께 준비됩니다. 처음에는 **자동 사용 꺼짐·만료 알림 켜짐**으로 시작하며, 메뉴에서 각각 바꿀 수 있습니다. 기존 설치를 업데이트하면 현재 선택을 유지합니다.
 
@@ -39,6 +41,8 @@ git clone https://github.com/yulepapa/codex-usage-menubar.git && cd codex-usage-
 
 ## 도움말
 
-[설치·표시 문제 해결](Docs/ADVANCED.md#빠른-문제-해결) · [자동 사용의 자세한 동작](Docs/ADVANCED.md#자동-사용과-알림의-동작) · [설정·복구·개발 안내](Docs/ADVANCED.md)
+[설치·표시 문제 해결](Docs/ADVANCED.md#빠른-문제-해결) · [자동 사용의 자세한 동작](Docs/ADVANCED.md#자동-사용과-알림의-동작) · [화면 디자인 재현](Docs/DESIGN_V1.2.3.md) · [설정·복구·개발 안내](Docs/ADVANCED.md)
 
 [MIT 라이선스](LICENSE)로 제공됩니다. OpenAI의 공식 제품은 아니며 Codex/OpenAI 상표는 각 소유자에게 속합니다.
+
+앱에 포함된 Paperlogy·Pretendard 서체는 각각 [Paperlogy OFL](Resources/Fonts/Paperlogy-OFL.txt), [Pretendard OFL](Resources/Fonts/Pretendard-OFL.txt)의 SIL Open Font License 1.1을 따릅니다. 서체는 앱 안에서만 등록하며 시스템에 설치하지 않습니다.

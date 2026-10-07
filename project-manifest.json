@@ -3,7 +3,7 @@
   "id": "codex-usage-menubar",
   "title": "Codex Usage Menu Bar",
   "kind": "desktop-application",
-  "version": "1.1.5",
+  "version": "1.2.3",
   "platforms": [
     "macOS"
   ],

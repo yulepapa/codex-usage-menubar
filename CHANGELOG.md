@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.2.3 — 2026-10-06
+
+- Show the selected credit's Seoul expiry directly on its collapsed ticket; keep unknown or expired data explicit rather than inventing an active credit.
+- Shorten the small card position to `1 / 2`, label the auto-use switch on/off in text, and move the final-20-minute/usage-independent rule into Details.
+- Replace the footer refresh word with an icon while retaining its full click target, tooltip, VoiceOver label and Command-R shortcut. Keep menu-bar usage and redemption policy unchanged.
+
+## 1.2.2 — 2026-10-06
+
+- Show a separate selectable tab for every observed reset credit. Four to six credits fit in the existing popover; additional tabs scroll horizontally with at least 44 pt of clickable width each.
+- Keep expiry order, selection, keyboard browsing and display-only card actions. Add native fixture checks for each card's hover and click target across four, five and six credits.
+
+## 1.2.1 — 2026-10-06
+
+- Show distinct, fresh reset credits as overlapping cards ordered by expiry, with stable ID tie-breaking and a small hover lift.
+- Select a card to reveal its expiry; click a selected non-default card again to return to the earliest credit. Default selection follows new earlier credits while explicit selections survive refresh by identity.
+- Limit the visible stack to three cards and provide previous/next navigation with position labels for every observed card. Keep unknown, stale, expired and count-only data explicit; disclose count/list mismatches.
+- Keep card actions display-only, with keyboard navigation and Reduce Motion support. Automatic use, saved settings, worker policy and durable result warnings remain independent of selection.
+- Add synthetic model, coordinate hit-testing, hover ordering, selection refresh, many-card, keyboard and callback-isolation checks.
+
+## 1.2.0 — 2026-10-06
+
+- Replace the open menu with the approved 660 × 414 native AppKit popover, retaining the closed status-bar icon, default font and numeric format.
+- Bundle Paperlogy and Pretendard under OFL; draw live usage gauges, expanding credit ticket and animated auto-use switch.
+- Show response-driven single/two-window usage, Seoul reset/expiry times, unknown or failed data and durable reset outcomes without implying consumption success.
+- Connect refresh, auto-use and reminder controls to existing settings and wake hooks, with keyboard navigation, Escape, accessible buttons and Reduce Motion support.
+- Retain the diagnostic menu export and add a strictly synthetic popover render/lifecycle export. Consumption, worker, ledger and pending protection are unchanged.
+
 ## 1.1.5 — 2026-10-06
 
 - Keep the service's nothingToReset warning visible across worker ticks and restarts during the same valid credit's three-minute retry delay.
