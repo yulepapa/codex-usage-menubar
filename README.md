@@ -20,7 +20,7 @@ git clone https://github.com/yulepapa/codex-usage-menubar.git && cd codex-usage-
 2. **남은 사용량**을 확인합니다. `60%`라면 해당 기간에 쓸 수 있는 양이 60% 남았다는 뜻입니다.
 3. **상세**에서 사용량이 다시 채워지는 시각과 최근 처리 결과를 확인합니다.
 
-사용량은 기본 5분마다 갱신됩니다. 바로 확인하려면 **새로고침**을 누르세요.
+사용량은 기본 5분마다 갱신됩니다. 바로 확인하려면 팝오버 아래쪽의 **↻ 새로고침**을 누르세요.
 
 ## 리셋권과 만료 알림
 
@@ -41,7 +41,7 @@ git clone https://github.com/yulepapa/codex-usage-menubar.git && cd codex-usage-
 
 ## 도움말
 
-[설치·표시 문제 해결](Docs/ADVANCED.md#빠른-문제-해결) · [자동 사용의 자세한 동작](Docs/ADVANCED.md#자동-사용과-알림의-동작) · [설정·복구·개발 안내](Docs/ADVANCED.md)
+[설치·표시 문제 해결](Docs/ADVANCED.md#빠른-문제-해결) · [자동 사용의 자세한 동작](Docs/ADVANCED.md#자동-사용과-알림의-동작) · [화면 디자인 재현](Docs/DESIGN_V1.2.3.md) · [설정·복구·개발 안내](Docs/ADVANCED.md)
 
 [MIT 라이선스](LICENSE)로 제공됩니다. OpenAI의 공식 제품은 아니며 Codex/OpenAI 상표는 각 소유자에게 속합니다.
 
