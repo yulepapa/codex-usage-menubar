@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
     private var timer: Timer?
     private var popoverTimer: Timer?
     private let popover = NSPopover()
+    private var outsideClickMonitor: Any?
     private var popoverController: UsagePopoverController?
     private var latestSnapshot: UsagePayload?
     private var lastUpdated: Date?
@@ -70,8 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.imageScaling = .scaleNone
         statusItem.button?.title = "…"
-        statusItem.button?.toolTip = localized("Codex remaining usage", "Codex 남은 사용량")
-        statusItem.button?.setAccessibilityLabel(localized("Codex remaining usage", "Codex 남은 사용량"))
+        statusItem.button?.toolTip = localized("COCO · Codex remaining usage", "코코 · Codex 남은 사용량")
+        statusItem.button?.setAccessibilityLabel(localized("COCO · Codex remaining usage", "코코 · Codex 남은 사용량"))
         statusItem.button?.setAccessibilityValue(localized("Checking usage", "사용량 확인 중"))
         // The status button's image, font, title and accessibility formatting stay unchanged.
         statusItem.button?.target = self
@@ -106,7 +107,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
         popoverTimer?.invalidate()
+        stopOutsideClickMonitor()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        if popover.isShown { popover.performClose(nil) }
+    }
+
+    private func startOutsideClickMonitor() {
+        guard outsideClickMonitor == nil else { return }
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self, self.popover.isShown else { return }
+            self.popover.performClose(nil)
+        }
+    }
+
+    private func stopOutsideClickMonitor() {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+            self.outsideClickMonitor = nil
+        }
     }
 
     @objc private func togglePopover() {
@@ -118,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+        if popover.isShown { startOutsideClickMonitor() }
         if lastUpdated.map({ displayDate.timeIntervalSince($0) > 90 }) ?? true { refreshUsage() }
         let tick = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
             self?.readWatcher(); self?.rebuildMenu()
@@ -128,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
 
     func popoverDidClose(_ notification: Notification) {
         popoverTimer?.invalidate(); popoverTimer = nil
+        stopOutsideClickMonitor()
     }
 
     func menuWillOpen(_ menu: NSMenu) { readWatcher(); rebuildMenu() }

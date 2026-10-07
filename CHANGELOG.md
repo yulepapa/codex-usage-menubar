@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.5 — 2026-10-07
+
+- 앱 표시 이름을 코코(COCO, Codex Companion)로 바꾸고 팝오버·메뉴바·정보 화면과 한국어 안내를 맞췄습니다.
+- 기존 앱 파일·실행 파일·번들 ID·설정·감시기 경로는 유지합니다. v1.2.4의 팝오버 외부 클릭 닫힘 수정도 이어집니다.
+
+## 1.2.4 — 2026-10-07
+
+- Close the popover when another app or menu bar item is clicked or the app loses focus; stop the outside-click monitor when the popover closes or the app exits.
+- Keep clicks inside the popover and the status item's repeat-click toggle unchanged.
+
 ## 1.2.3 — 2026-10-06
 
 - Show the selected credit's Seoul expiry directly on its collapsed ticket; keep unknown or expired data explicit rather than inventing an active credit.

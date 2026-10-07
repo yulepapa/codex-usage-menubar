@@ -1,4 +1,4 @@
-# Codex Usage v1.2.3 최종 팝오버 디자인 사양
+# 코코(COCO)의 이전 Codex Usage v1.2.3 팝오버 디자인 사양
 
 이 문서는 **v1.2.3 소스의 AppKit 구현을 재현하는 단일 디자인 기준**이다. 논리 좌표와 동작은 `Sources/CodexUsage/UsagePopover.swift`, 데이터·상태 문구는 `PopoverPresentation.swift`와 `ResetRuntime.swift`, 닫힌 메뉴바는 `main.swift`와 `StatusIcon.swift`에 근거한다. 아래 숫자와 색은 코드에서 확인한 값이며, 사용자 계정의 사용량·리셋권 수·만료일은 디자인 토큰이 아니다. 코드가 이후 바뀌면 코드를 검증한 뒤 이 문서를 갱신한다.
 
