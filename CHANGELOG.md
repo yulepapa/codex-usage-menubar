@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.6 — 2026-10-10
+
+- 주간 잔여량 막대의 검은 끝점을 제거하고, 응답의 10080분 구간 길이와 초기화 시각으로 계산한 남은 시간 참고 눈금을 표시합니다.
+- 균등 사용 기준 대비 차이와 산식을 툴팁·키보드 초점·상세에 제공합니다. 조회 실패·결측·만료와 조기 리셋 후 이전 응답에는 눈금을 숨기고 새 응답에서 다시 계산합니다.
+- 5시간 구간, 리셋권 디자인과 자동 사용 조건은 유지합니다.
+
+## 1.2.5 — 2026-10-07
+
+- 앱 표시 이름을 코코(COCO, Codex Companion)로 바꾸고 팝오버·메뉴바·정보 화면과 한국어 안내를 맞췄습니다.
+- 기존 앱 파일·실행 파일·번들 ID·설정·감시기 경로는 유지합니다. v1.2.4의 팝오버 외부 클릭 닫힘 수정도 이어집니다.
+
+## 1.2.4 — 2026-10-07
+
+- Close the popover when another app or menu bar item is clicked or the app loses focus; stop the outside-click monitor when the popover closes or the app exits.
+- Keep clicks inside the popover and the status item's repeat-click toggle unchanged.
+
 ## 1.2.3 — 2026-10-06
 
 - Show the selected credit's Seoul expiry directly on its collapsed ticket; keep unknown or expired data explicit rather than inventing an active credit.

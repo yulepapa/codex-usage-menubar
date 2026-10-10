@@ -37,8 +37,8 @@ cp "$INFO_PLIST" "$STAGE_APP/Contents/Info.plist"
 cp -R "$ROOT/Resources/Fonts" "$STAGE_APP/Contents/Resources/Fonts"
 if [ "${CODEX_USAGE_DEVELOPMENT:-0}" = "1" ]; then
     /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier io.github.yulepapa.CodexUsage.development' "$STAGE_APP/Contents/Info.plist"
-    /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Codex Usage Dev' "$STAGE_APP/Contents/Info.plist"
-    /usr/libexec/PlistBuddy -c 'Set :CFBundleName Codex Usage Dev' "$STAGE_APP/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName 코코 (COCO) Dev' "$STAGE_APP/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c 'Set :CFBundleName 코코 (COCO) Dev' "$STAGE_APP/Contents/Info.plist"
 fi
 
 binaries=()

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "codex-usage-menubar",
-  "title": "Codex Usage Menu Bar",
+  "title": "코코 (COCO) — Codex Companion",
   "kind": "desktop-application",
-  "version": "1.2.3",
+  "version": "1.2.6",
   "platforms": [
     "macOS"
   ],

@@ -142,6 +142,8 @@ final class UsagePopoverView: NSView {
     let statusButton = PopoverButton(label: localized("Reset status details", "리셋 처리 상태 상세"), frame: NSRect(x: 410, y: 325, width: 224, height: 29))
     let refreshButton = PopoverButton(label: localized("Refresh", "새로고침"), frame: NSRect(x: 24, y: 384, width: 88, height: 25))
     let detailsButton = PopoverButton(label: localized("Details & settings", "상세 · 알림 설정"), frame: NSRect(x: 122, y: 384, width: 140, height: 25))
+    let aboutButton = PopoverButton(label: localized("About COCO", "코코 정보"), frame: NSRect(x: 445, y: 384, width: 130, height: 25))
+    let weeklyReferenceButton = PopoverButton(label: localized("Weekly uniform reference details", "주간 균등 기준 상세"), frame: .zero)
     let quitButton = PopoverButton(label: localized("Quit", "종료"), frame: NSRect(x: 584, y: 384, width: 52, height: 25))
     let reminderButton = NSButton(checkboxWithTitle: localized("Expiry notifications", "만료 전 Mac 알림"), target: nil, action: nil)
     private let scroll = NSScrollView()
@@ -175,9 +177,11 @@ final class UsagePopoverView: NSView {
         statusButton.onPress = { [weak self] in self?.setDetails(true) }
         refreshButton.onPress = { [weak self] in self?.onRefresh?() }
         detailsButton.onPress = { [weak self] in self?.setDetails(!(self?.showingDetails ?? false)) }
+        aboutButton.onPress = { NSApp.orderFrontStandardAboutPanel(nil); NSApp.activate(ignoringOtherApps: true) }
+        weeklyReferenceButton.onPress = { [weak self] in self?.setDetails(true) }
         quitButton.onPress = { [weak self] in self?.onQuit?() }
         autoButton.setButtonType(.switch)
-        for button in [ticketButton, previousCardButton, nextCardButton, autoButton, statusButton, refreshButton, detailsButton, quitButton, closeButton] { addSubview(button) }
+        for button in [ticketButton, previousCardButton, nextCardButton, autoButton, statusButton, refreshButton, detailsButton, aboutButton, weeklyReferenceButton, quitButton, closeButton] { addSubview(button) }
         scroll.frame = NSRect(x: 28, y: 142, width: 606, height: 218)
         scroll.hasVerticalScroller = true; scroll.drawsBackground = false; scroll.borderType = .noBorder
         detailText.isEditable = false; detailText.isSelectable = true; detailText.drawsBackground = false
@@ -402,14 +406,40 @@ final class UsagePopoverView: NSView {
             element.setAccessibilityParent(self)
             return element
         }
+        let referenceWindow = model.windows.prefix(2).enumerated().first { model.weeklyReference(for: $0.element) != nil }
+        let reference = referenceWindow.flatMap { model.weeklyReference(for: $0.element) }
+        weeklyReferenceButton.isHidden = showingDetails || reference == nil
+        if let referenceWindow, let reference {
+            let gy: CGFloat = model.windows.count == 1 ? 286 : 160 + CGFloat(referenceWindow.offset * 128)
+            weeklyReferenceButton.frame = NSRect(x: 28, y: gy - 5, width: 346, height: 61)
+            weeklyReferenceButton.toolTip = reference.explanation
+            weeklyReferenceButton.setAccessibilityValue(reference.explanation)
+        } else {
+            weeklyReferenceButton.toolTip = nil
+            weeklyReferenceButton.setAccessibilityValue(nil)
+        }
+        let referenceControls: [NSView] = weeklyReferenceButton.isHidden ? [] : [weeklyReferenceButton]
         let cardControls = [ticketButton] + backCardButtons.filter { !$0.isHidden }
             + [previousCardButton, nextCardButton].filter { !$0.isHidden }
-        let visible: [Any] = showingDetails ? [closeButton, reminderButton, scroll, refreshButton, detailsButton, quitButton]
-            : readableElements + [closeButton] + cardControls + [autoButton, statusButton, refreshButton, detailsButton, quitButton]
+        var visible: [Any]
+        if showingDetails {
+            visible = [closeButton, reminderButton, scroll, refreshButton, detailsButton, aboutButton, quitButton]
+        } else {
+            visible = readableElements
+            visible.append(closeButton)
+            visible.append(contentsOf: referenceControls)
+            visible.append(contentsOf: cardControls)
+            visible.append(contentsOf: [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton])
+        }
         setAccessibilityChildren(visible)
-        let keyViews: [NSView] = showingDetails
-            ? [reminderButton, detailText, refreshButton, detailsButton, quitButton, closeButton]
-            : cardControls + [autoButton, statusButton, refreshButton, detailsButton, quitButton, closeButton]
+        var keyViews: [NSView]
+        if showingDetails {
+            keyViews = [reminderButton, detailText, refreshButton, detailsButton, aboutButton, quitButton, closeButton]
+        } else {
+            keyViews = referenceControls
+            keyViews.append(contentsOf: cardControls)
+            keyViews.append(contentsOf: [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton, closeButton])
+        }
         for index in keyViews.indices { keyViews[index].nextKeyView = keyViews[(index + 1) % keyViews.count] }
         needsDisplay = true
     }
@@ -418,7 +448,7 @@ final class UsagePopoverView: NSView {
         fill(NSRect(origin: .zero, size: Self.size), radius: 22, color: Palette.white)
         let edge = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 22, yRadius: 22)
         Palette.color(0xD7DCCF).setStroke(); edge.lineWidth = 1; edge.stroke()
-        text(showingDetails ? localized("Details & settings", "상세 · 알림 설정") : "Codex Usage", x: 25, y: 23, size: 25)
+        text(showingDetails ? localized("Details & settings", "상세 · 알림 설정") : "COCO", x: 25, y: 23, size: 25)
         let subtitle: String
         if !model.warnings.isEmpty { subtitle = "⚠ " + model.warnings[0] + (model.warnings.count > 1 ? " · +\(model.warnings.count - 1)" : "") }
         else if model.usageFailed { subtitle = localized("Latest check failed · previous values", "최근 조회 실패 · 이전 확인 값") }
@@ -430,7 +460,7 @@ final class UsagePopoverView: NSView {
         text(model.refreshing ? "…" : "↻", x: 68, y: 392, size: 18,
              color: Palette.muted, body: true, center: true)
         text(showingDetails ? localized("← Usage", "← 사용량") : localized("Details · alerts", "상세 · 알림 설정") + (model.warnings.isEmpty ? "" : " •"), x: 128, y: 392, size: 11, color: Palette.muted, body: true)
-        text("v" + appVersion, x: 540, y: 392, size: 11, color: Palette.muted, body: true, right: true)
+        text(localized("About COCO · v", "코코 정보 · v") + appVersion, x: 568, y: 392, size: 11, color: Palette.muted, body: true, right: true)
         text(localized("Quit", "종료"), x: 629, y: 392, size: 11, color: Palette.muted, body: true, right: true)
         guard !showingDetails else { return }
         line((390, 96), (390, 360), Palette.rule, 1.1)
@@ -458,7 +488,15 @@ final class UsagePopoverView: NSView {
             let width = 346 * CGFloat(window.remainingPercent) / 100
             if width > 0 {
                 fill(NSRect(x: 28, y: gy, width: width, height: 27), radius: min(13.5, width / 2), color: window.windowDurationMins == 300 ? Palette.lime : Palette.color(0xB7C784))
-                dot(28 + width, gy + 13.5, 2.6, Palette.ink)
+                if window.windowDurationMins != 10080 { dot(28 + width, gy + 13.5, 2.6, Palette.ink) }
+            }
+            if let reference = model.weeklyReference(for: window) {
+                let x = 28 + 346 * CGFloat(reference.remainingTimeFraction)
+                line((x, gy - 3), (x, gy + 30), Palette.white, 4)
+                line((x, gy - 3), (x, gy + 30), Palette.ink, 1.5)
+                line((x - 3, gy - 4), (x + 3, gy - 4), Palette.ink, 1.5)
+                text(localized("Uniform reference", "균등 기준"), x: 368, y: gy + 43, size: 11,
+                     color: Palette.muted, body: true, right: true, maxWidth: 92)
             }
             let reset = window.resetsAt.map { PopoverPresentation.date(Date(timeIntervalSince1970: Double($0))) } ?? localized("Time unavailable", "시각 미제공")
             text(localized("Resets ", "초기화 ") + reset, x: 28, y: gy + 43, size: 12, color: Palette.muted, body: true, maxWidth: 346)
