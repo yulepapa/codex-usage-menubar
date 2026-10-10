@@ -143,6 +143,7 @@ final class UsagePopoverView: NSView {
     let refreshButton = PopoverButton(label: localized("Refresh", "새로고침"), frame: NSRect(x: 24, y: 384, width: 88, height: 25))
     let detailsButton = PopoverButton(label: localized("Details & settings", "상세 · 알림 설정"), frame: NSRect(x: 122, y: 384, width: 140, height: 25))
     let aboutButton = PopoverButton(label: localized("About COCO", "코코 정보"), frame: NSRect(x: 445, y: 384, width: 130, height: 25))
+    let weeklyReferenceButton = PopoverButton(label: localized("Weekly uniform reference details", "주간 균등 기준 상세"), frame: .zero)
     let quitButton = PopoverButton(label: localized("Quit", "종료"), frame: NSRect(x: 584, y: 384, width: 52, height: 25))
     let reminderButton = NSButton(checkboxWithTitle: localized("Expiry notifications", "만료 전 Mac 알림"), target: nil, action: nil)
     private let scroll = NSScrollView()
@@ -177,9 +178,10 @@ final class UsagePopoverView: NSView {
         refreshButton.onPress = { [weak self] in self?.onRefresh?() }
         detailsButton.onPress = { [weak self] in self?.setDetails(!(self?.showingDetails ?? false)) }
         aboutButton.onPress = { NSApp.orderFrontStandardAboutPanel(nil); NSApp.activate(ignoringOtherApps: true) }
+        weeklyReferenceButton.onPress = { [weak self] in self?.setDetails(true) }
         quitButton.onPress = { [weak self] in self?.onQuit?() }
         autoButton.setButtonType(.switch)
-        for button in [ticketButton, previousCardButton, nextCardButton, autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton, closeButton] { addSubview(button) }
+        for button in [ticketButton, previousCardButton, nextCardButton, autoButton, statusButton, refreshButton, detailsButton, aboutButton, weeklyReferenceButton, quitButton, closeButton] { addSubview(button) }
         scroll.frame = NSRect(x: 28, y: 142, width: 606, height: 218)
         scroll.hasVerticalScroller = true; scroll.drawsBackground = false; scroll.borderType = .noBorder
         detailText.isEditable = false; detailText.isSelectable = true; detailText.drawsBackground = false
@@ -404,14 +406,27 @@ final class UsagePopoverView: NSView {
             element.setAccessibilityParent(self)
             return element
         }
+        let referenceWindow = model.windows.prefix(2).enumerated().first { model.weeklyReference(for: $0.element) != nil }
+        let reference = referenceWindow.flatMap { model.weeklyReference(for: $0.element) }
+        weeklyReferenceButton.isHidden = showingDetails || reference == nil
+        if let referenceWindow, let reference {
+            let gy: CGFloat = model.windows.count == 1 ? 286 : 160 + CGFloat(referenceWindow.offset * 128)
+            weeklyReferenceButton.frame = NSRect(x: 28, y: gy - 5, width: 346, height: 61)
+            weeklyReferenceButton.toolTip = reference.explanation
+            weeklyReferenceButton.setAccessibilityValue(reference.explanation)
+        } else {
+            weeklyReferenceButton.toolTip = nil
+            weeklyReferenceButton.setAccessibilityValue(nil)
+        }
+        let referenceControls: [NSView] = weeklyReferenceButton.isHidden ? [] : [weeklyReferenceButton]
         let cardControls = [ticketButton] + backCardButtons.filter { !$0.isHidden }
             + [previousCardButton, nextCardButton].filter { !$0.isHidden }
         let visible: [Any] = showingDetails ? [closeButton, reminderButton, scroll, refreshButton, detailsButton, aboutButton, quitButton]
-            : readableElements + [closeButton] + cardControls + [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton]
+            : readableElements + [closeButton] + referenceControls + cardControls + [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton]
         setAccessibilityChildren(visible)
         let keyViews: [NSView] = showingDetails
             ? [reminderButton, detailText, refreshButton, detailsButton, aboutButton, quitButton, closeButton]
-            : cardControls + [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton, closeButton]
+            : referenceControls + cardControls + [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton, closeButton]
         for index in keyViews.indices { keyViews[index].nextKeyView = keyViews[(index + 1) % keyViews.count] }
         needsDisplay = true
     }
@@ -460,7 +475,15 @@ final class UsagePopoverView: NSView {
             let width = 346 * CGFloat(window.remainingPercent) / 100
             if width > 0 {
                 fill(NSRect(x: 28, y: gy, width: width, height: 27), radius: min(13.5, width / 2), color: window.windowDurationMins == 300 ? Palette.lime : Palette.color(0xB7C784))
-                dot(28 + width, gy + 13.5, 2.6, Palette.ink)
+                if window.windowDurationMins != 10080 { dot(28 + width, gy + 13.5, 2.6, Palette.ink) }
+            }
+            if let reference = model.weeklyReference(for: window) {
+                let x = 28 + 346 * CGFloat(reference.remainingTimeFraction)
+                line((x, gy - 3), (x, gy + 30), Palette.white, 4)
+                line((x, gy - 3), (x, gy + 30), Palette.ink, 1.5)
+                line((x - 3, gy - 4), (x + 3, gy - 4), Palette.ink, 1.5)
+                text(localized("Uniform reference", "균등 기준"), x: 368, y: gy + 43, size: 11,
+                     color: Palette.muted, body: true, right: true, maxWidth: 92)
             }
             let reset = window.resetsAt.map { PopoverPresentation.date(Date(timeIntervalSince1970: Double($0))) } ?? localized("Time unavailable", "시각 미제공")
             text(localized("Resets ", "초기화 ") + reset, x: 28, y: gy + 43, size: 12, color: Palette.muted, body: true, maxWidth: 346)

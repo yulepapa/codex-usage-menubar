@@ -3,7 +3,7 @@ import AppKit
 /// An explicit synthetic-only path: no AppDelegate, account client, stores,
 /// notification center, settings writes or worker process is created here.
 enum PopoverDiagnostics {
-    static func export(to directory: URL) throws {
+    static func export(to directory: URL, includeLifecycle: Bool = true) throws {
         func check(_ value: Bool, _ label: String) throws {
             guard value else { throw NSError(domain: "PopoverDiagnostics", code: 1, userInfo: [NSLocalizedDescriptionKey: label]) }
         }
@@ -46,9 +46,20 @@ enum PopoverDiagnostics {
             try view.png().write(to: directory.appendingPathComponent(name + ".png"))
         }
         try save("two-collapsed")
+        try check(!view.weeklyReferenceButton.isHidden && view.weeklyReferenceButton.toolTip?.contains("10080") == true,
+                  "weekly reference is based on the supplied weekly duration")
+        try check(view.weeklyReferenceButton.accessibilityValue() as? String == view.weeklyReferenceButton.toolTip,
+                  "weekly reference tooltip and accessible value explain the same formula")
+        view.weeklyReferenceButton.performClick(nil)
+        try check(view.showingDetails, "reference opens existing read-only details")
+        view.setDetails(false)
         view.setExpanded(true, animated: false); try save("two-expanded")
         view.model = make([week]); try save("one-weekly")
         view.model = make([five]); try save("one-five-hour")
+        try check(view.weeklyReferenceButton.isHidden, "five-hour window never gets a weekly reference")
+        let missingReset = UsageWindow(slot: "primary", usedPercent: 30, windowDurationMins: 10080, resetsAt: nil)
+        view.model = make([missingReset]); try save("weekly-missing-reset")
+        try check(view.weeklyReferenceButton.isHidden, "unknown weekly interval hides reference without an invented seven-day start")
         state.availableCount = nil; state.inventory = []
         view.model = make([]); try save("unknown")
         state.lastError = "queryFailed"; view.model = make([], failed: true); try save("failure")
@@ -255,6 +266,8 @@ enum PopoverDiagnostics {
         view.setExpanded(false)
         RunLoop.current.run(until: Date().addingTimeInterval(0.45))
         try check(!view.expanded && view.ticketProgress == 0, "normal ticket animation finishes target")
+        var cycles = 0
+        if includeLifecycle {
         // Exercise real NSPopover lifecycle against this process's temporary status item.
         // This records programmatic AppKit behavior, never a screen capture or physical click.
         host.contentViewController = nil
@@ -277,7 +290,6 @@ enum PopoverDiagnostics {
                                     "windowVisible": item.button?.window?.isVisible ?? false,
                                     "appActive": app.isActive]
         try JSONSerialization.data(withJSONObject: anchor, options: [.prettyPrinted]).write(to: directory.appendingPathComponent("anchor.json"))
-        var cycles = 0
         for _ in 0..<3 {
             popover.show(relativeTo: item.button!.bounds, of: item.button!, preferredEdge: .minY)
             pump()
@@ -313,11 +325,12 @@ enum PopoverDiagnostics {
             cycles += 1
         }
         try check(closeCalls == 3, "three close callbacks")
+        }
         let report: [String: Any] = [
             "version": appVersion, "mode": "synthetic-only", "sizePoints": [660, 414],
             "renderPixels": [1320, 828], "screenCapture": false,
             "liveAccountRequests": 0, "settingsWrites": 0, "notificationPermissionRequests": 0,
-            "programmaticPopoverCycles": cycles, "closeActions": closeCalls, "keyboardTabChecked": true, "creditStackChecks": "passed", "cardActionSettingCallbacks": forbiddenCardCallbacks,
+            "programmaticPopoverCycles": cycles, "closeActions": closeCalls, "keyboardTabChecked": includeLifecycle, "creditStackChecks": "passed", "cardActionSettingCallbacks": forbiddenCardCallbacks,
             "mockAutoUseActions": autoCalls, "mockReminderActions": reminderCalls,
             "mockRefreshActions": refreshCalls, "reducedMotionChecked": true, "normalAnimationExercised": normalAnimationExercised,
             "mockSaveFailureRestored": true,

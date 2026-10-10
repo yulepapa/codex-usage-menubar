@@ -153,6 +153,69 @@ enum PopoverPresentationTests {
         selection.select("c", in: pendingModel.individualCredits)
         check(pendingModel.status == .pending && pendingModel.expiresAt == a.expiresAt, "selection never changes overall pending status or earliest policy expiry")
         check(!pendingModel.readout.joined().contains("private"), "selection never exposes ledger keys")
+        // Weekly reference uses the returned interval, on the remaining axis.
+        let duration = 10080.0 * 60
+        let end = Int(now.timeIntervalSince1970 + duration * 0.4)
+        func weekly(_ used: Int = 75, minutes: Int? = 10080, reset: Int? = nil) -> UsageWindow {
+            UsageWindow(slot: "primary", usedPercent: used, windowDurationMins: minutes, resetsAt: reset ?? end)
+        }
+        let timed = weekly()
+        let reference = WeeklyUsageReference.make(window: timed, now: now)!
+        check(abs(reference.remainingTimeFraction - 0.4) < 0.000001, "reference follows time remaining, not elapsed")
+        check(abs(reference.usageDeltaPercentagePoints - 15) < 0.000001, "faster usage is positive in usage percentage points")
+        check(abs(WeeklyUsageReference.make(window: weekly(35), now: now)!.usageDeltaPercentagePoints + 25) < 0.000001,
+              "slower usage is negative without a warning status")
+        for (used, expected) in [(-20, -60.0), (0, -60.0), (100, 40.0), (120, 40.0)] {
+            check(abs(WeeklyUsageReference.make(window: weekly(used), now: now)!.usageDeltaPercentagePoints - expected) < 0.000001,
+                  "delta uses the same bounded usage as the painted bar")
+        }
+        check(WeeklyUsageReference.make(window: timed, now: Date(timeIntervalSince1970: Double(end) - duration))!.remainingTimeFraction == 1,
+              "start boundary places marker at 100 percent")
+        let beforeEnd = WeeklyUsageReference.make(window: timed, now: Date(timeIntervalSince1970: Double(end) - 1))!
+        check(beforeEnd.remainingTimeFraction > 0 && beforeEnd.remainingTimeFraction < 1, "last second stays within the track")
+        for time in [Double(end), Double(end) + 1, Double(end) - duration - 1] {
+            check(WeeklyUsageReference.make(window: timed, now: Date(timeIntervalSince1970: time)) == nil,
+                  "expired response and time before the supplied interval cannot show a reference")
+        }
+        for minutes: Int? in [nil, 0, -1, 300, 1440, Int.max] {
+            check(WeeklyUsageReference.make(window: weekly(minutes: minutes), now: now) == nil,
+                  "unknown, invalid or nonweekly duration does not assume seven days")
+        }
+        let missingReset = UsageWindow(slot: "primary", usedPercent: 30, windowDurationMins: 10080, resetsAt: nil)
+        check(WeeklyUsageReference.make(window: missingReset, now: now) == nil, "missing reset hides reference")
+        func timedModel(checked: Date? = now, failed: Bool = false, resetState: ResetEngineState? = nil,
+                        window: UsageWindow = timed) -> PopoverPresentation {
+            PopoverPresentation(snapshot: UsagePayload(bucketLabel: "Codex", windows: [window],
+                credits: CreditInfo(availableCount: nil, earliestExpiresAt: nil)), checkedAt: checked, now: now,
+                usageFailed: failed, reset: ResetMenuPresentation(title: "sample"), state: resetState)
+        }
+        check(timedModel().weeklyReference(for: timed) != nil, "ordinary returned duration needs no independent start field")
+        check(timedModel(checked: nil).weeklyReference(for: timed) == nil, "unmeasured response hides reference")
+        check(timedModel(failed: true).weeklyReference(for: timed) == nil, "failed query hides cached reference")
+        check(timedModel(checked: now.addingTimeInterval(-390)).weeklyReference(for: timed) != nil, "freshness boundary includes configured grace")
+        check(timedModel(checked: now.addingTimeInterval(-391)).weeklyReference(for: timed) == nil, "stale usage hides reference")
+        check(timedModel(checked: now.addingTimeInterval(1)).weeklyReference(for: timed) == nil, "future snapshot is invalid")
+        var resetState = ResetEngineState()
+        resetState.attempts["synthetic-early-reset"] = Redemption(key: "synthetic", expiresAt: now,
+            attemptedAt: now.addingTimeInterval(-30), outcome: "reset")
+        check(timedModel(checked: now.addingTimeInterval(-60), resetState: resetState).weeklyReference(for: timed) == nil,
+              "pre-reset snapshot cannot keep the previous reference")
+        let newWindow = weekly(0, reset: Int(now.timeIntervalSince1970 + duration))
+        let updated = timedModel(resetState: resetState, window: newWindow).weeklyReference(for: newWindow)!
+        check(updated.remainingTimeFraction == 1 && updated.usageDeltaPercentagePoints == 0,
+              "fresh early-reset response recomputes from its new returned reset time")
+        check(timedModel(resetState: resetState).weeklyReference(for: timed) != nil,
+              "fresh post-reset response retaining the old interval uses the actual returned fields")
+        resetState.phase = "reset"; resetState.checkedAt = now.addingTimeInterval(-5)
+        check(timedModel(checked: now.addingTimeInterval(-10), resetState: resetState).weeklyReference(for: timed) == nil,
+              "usage read after intent but before the worker's post-result read is still obsolete")
+        check(timedModel(resetState: resetState).weeklyReference(for: timed) != nil,
+              "fresh UI read after the worker's post-result read restores the reference")
+        let refreshedWindow = weekly(30, reset: Int(now.timeIntervalSince1970 + duration * 0.7))
+        check(abs(timedModel(window: refreshedWindow).weeklyReference(for: refreshedWindow)!.remainingTimeFraction - 0.7) < 0.000001,
+              "changed reset fields replace the previous marker")
+        check(timedModel().readout.contains(where: { $0.contains("10080") && $0.contains(localized("Reference start", "기준 시작")) }),
+              "details and accessibility explain the supplied duration and formula")
         print("\(passed) popover model checks passed")
     }
 }

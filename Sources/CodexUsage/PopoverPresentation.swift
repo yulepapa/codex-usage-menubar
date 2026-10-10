@@ -1,5 +1,41 @@
 import Foundation
 
+/// A display-only reference over the interval supplied by the usage service.
+/// It does not affect reset eligibility or predict when usage will run out.
+struct WeeklyUsageReference {
+    let remainingTimeFraction: Double
+    let usageDeltaPercentagePoints: Double
+    let durationMinutes: Int
+    let resetsAt: Date
+
+    static func make(window: UsageWindow, now: Date) -> WeeklyUsageReference? {
+        guard let minutes = window.windowDurationMins, minutes == 10080,
+              let reset = window.resetsAt else { return nil }
+        let end = Double(reset), duration = Double(minutes) * 60
+        let time = now.timeIntervalSince1970, start = end - duration
+        guard duration > 0, duration.isFinite, time.isFinite,
+              start <= time, time < end else { return nil }
+        let remaining = min(1, max(0, (end - time) / duration))
+        let used = Double(100 - window.remainingPercent)
+        return WeeklyUsageReference(remainingTimeFraction: remaining,
+            usageDeltaPercentagePoints: used - 100 * (1 - remaining),
+            durationMinutes: minutes, resetsAt: Date(timeIntervalSince1970: end))
+    }
+
+    var deltaText: String {
+        let number = String(format: "%+.1f", locale: Locale(identifier: "en_US_POSIX"), usageDeltaPercentagePoints)
+            .replacingOccurrences(of: "-", with: "−")
+        return localized("Usage vs uniform reference: \(number) pp", "균등 기준 대비 \(number)%p")
+    }
+    var explanation: String {
+        deltaText + "\n" + localized(
+            "Time left: \(String(format: "%.1f", remainingTimeFraction * 100))% · \(durationMinutes)-minute window · resets \(PopoverPresentation.date(resetsAt))",
+            "남은 시간 \(String(format: "%.1f", remainingTimeFraction * 100))% · \(durationMinutes)분 구간 · 초기화 \(PopoverPresentation.date(resetsAt))")
+            + "\n" + localized("Reference start = reset time − supplied window duration. A reference, not a recommendation, limit or depletion forecast.",
+                "기준 시작 = 초기화 시각 − 제공된 구간 길이. 참고선이며 권장량·제한·소진 예측이 아닙니다.")
+    }
+}
+
 /// Read-only display state. Eligibility and all consumption remain in ResetEngine.
 struct PopoverPresentation {
     static let seoul = TimeZone(identifier: "Asia/Seoul")!
@@ -19,6 +55,8 @@ struct PopoverPresentation {
     var warnings: [String] = []
     var details: [String] = []
     var fixture = false
+    var usageMaxAge: TimeInterval = 390
+    private var lastConfirmedUsageResetAt: Date?
 
     enum Status: String {
         case pending, failed, nothingToReset, noCredit, unknown, used, off, setup, expired, ready, waiting
@@ -42,12 +80,21 @@ struct PopoverPresentation {
     init(snapshot: UsagePayload?, checkedAt: Date?, now: Date, refreshing: Bool = false,
          usageFailed: Bool = false, reset: ResetMenuPresentation,
          state: ResetEngineState? = nil, settings: ResetSettings? = nil, active: Bool = false,
-         native: Bool = false, legacyCredits: CreditInfo? = nil, details: [String] = []) {
+         native: Bool = false, legacyCredits: CreditInfo? = nil, details: [String] = [],
+         usageMaxAge: TimeInterval = 390) {
         self.windows = (snapshot?.windows ?? []).sorted {
             ($0.windowDurationMins ?? Int.max, $0.slot) < ($1.windowDurationMins ?? Int.max, $1.slot)
         }
         self.checkedAt = checkedAt; self.now = now; self.refreshing = refreshing
         self.usageFailed = usageFailed; self.warnings = reset.warnings; self.details = details
+        self.usageMaxAge = usageMaxAge
+        self.lastConfirmedUsageResetAt = state?.attempts.values
+            .filter { ["reset", "alreadyRedeemed"].contains($0.outcome) }.map(\.attemptedAt).max()
+        if let confirmed = lastConfirmedUsageResetAt, let state,
+           ["reset", "alreadyRedeemed"].contains(state.phase), let postResetRead = state.checkedAt {
+            // The worker's post-result read can be later than its durable intent.
+            self.lastConfirmedUsageResetAt = max(confirmed, postResetRead)
+        }
         self.autoUse = settings?.autoUse == true; self.reminders = settings?.reminders == true
         self.canEdit = native && active && settings != nil && state != nil
         if native {
@@ -101,6 +148,13 @@ struct PopoverPresentation {
 
     var expiryValue: String { expiryValue(for: expiresAt) }
 
+    func weeklyReference(for window: UsageWindow) -> WeeklyUsageReference? {
+        guard !usageFailed, let checkedAt, usageMaxAge.isFinite, usageMaxAge >= 0,
+              (0...usageMaxAge).contains(now.timeIntervalSince(checkedAt)),
+              lastConfirmedUsageResetAt.map({ checkedAt > $0 }) ?? true else { return nil }
+        return WeeklyUsageReference.make(window: window, now: now)
+    }
+
     func expiryValue(for date: Date?) -> String {
         guard let date else { return localized("Unknown", "미제공") }
         let seconds = date.timeIntervalSince(now)
@@ -139,6 +193,7 @@ struct PopoverPresentation {
         }
         if windows.isEmpty { rows.append(usageFailed ? localized("Usage check failed", "사용량 조회 실패") : localized("Usage windows unavailable", "사용량 구간 미제공")) }
         rows.append(status.title)
+        rows += windows.compactMap { weeklyReference(for: $0)?.explanation }
         if let date = expiresAt { rows.append(localized("Credit expires ", "리셋권 만료 ") + Self.date(date)) }
         rows += warnings + details
         var seen = Set<String>()

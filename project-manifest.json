@@ -3,7 +3,7 @@
   "id": "codex-usage-menubar",
   "title": "코코 (COCO) — Codex Companion",
   "kind": "desktop-application",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "platforms": [
     "macOS"
   ],
