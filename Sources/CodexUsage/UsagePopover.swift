@@ -421,12 +421,25 @@ final class UsagePopoverView: NSView {
         let referenceControls: [NSView] = weeklyReferenceButton.isHidden ? [] : [weeklyReferenceButton]
         let cardControls = [ticketButton] + backCardButtons.filter { !$0.isHidden }
             + [previousCardButton, nextCardButton].filter { !$0.isHidden }
-        let visible: [Any] = showingDetails ? [closeButton, reminderButton, scroll, refreshButton, detailsButton, aboutButton, quitButton]
-            : readableElements + [closeButton] + referenceControls + cardControls + [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton]
+        var visible: [Any]
+        if showingDetails {
+            visible = [closeButton, reminderButton, scroll, refreshButton, detailsButton, aboutButton, quitButton]
+        } else {
+            visible = readableElements
+            visible.append(closeButton)
+            visible.append(contentsOf: referenceControls)
+            visible.append(contentsOf: cardControls)
+            visible.append(contentsOf: [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton])
+        }
         setAccessibilityChildren(visible)
-        let keyViews: [NSView] = showingDetails
-            ? [reminderButton, detailText, refreshButton, detailsButton, aboutButton, quitButton, closeButton]
-            : referenceControls + cardControls + [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton, closeButton]
+        var keyViews: [NSView]
+        if showingDetails {
+            keyViews = [reminderButton, detailText, refreshButton, detailsButton, aboutButton, quitButton, closeButton]
+        } else {
+            keyViews = referenceControls
+            keyViews.append(contentsOf: cardControls)
+            keyViews.append(contentsOf: [autoButton, statusButton, refreshButton, detailsButton, aboutButton, quitButton, closeButton])
+        }
         for index in keyViews.indices { keyViews[index].nextKeyView = keyViews[(index + 1) % keyViews.count] }
         needsDisplay = true
     }
